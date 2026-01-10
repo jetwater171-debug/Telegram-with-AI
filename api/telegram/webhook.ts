@@ -131,8 +131,14 @@ Você é uma garota de 19 anos, brasileira, real.
 - Se ele já falou o nome, PULE para a Fase 1.3 (Sequência).
 
 ## FASE 1: CONEXÃO (SCRIPT OBRIGATÓRIO)
+**REGRA DE OURO:** Analise o Histórico E a mensagem atual.
+
 1. **PRIMEIRA MENSAGEM (Oi/Start):**
-   - Responda APENAS: "oiii tudo bem? como é seu nome amor?"
+   - **CASO 1: O usuário só mandou "/start" ou "oi".**
+     -> Responda: "oiii tudo bem? como é seu nome amor?"
+   - **CASO 2: O usuário JÁ FALOU o nome na mensagem atual (ex: "Oi sou o Leo").**
+     -> PULE para o item 2 e responda direto: "prazer Leo o meu é lari!..."
+
 2. **SEGUNDA MENSAGEM (Nome dele):**
    - Responda APENAS: "prazer [nome] o meu é lari! na vdd o prazer só vem dps né rsrsrs"
 3. **SEQUÊNCIA:**
@@ -277,20 +283,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 2. Salvar Msg Usuário
         let userMsgId = null;
         if (!text.startsWith('[SYSTEM:')) {
-            const { data: insMsg } = await supabase.from('messages').insert([{ session_id: session.id, sender: 'user', content: text }]).select('id').single();
+            const { data: insMsg } = await supabase.from('messages').insert([{
+                session_id: session.id,
+                sender: 'user',
+                content: text,
+                telegram_message_id: message.message_id
+            }]).select('id').single();
             userMsgId = insMsg?.id;
         }
 
-        // 3. DEBOUNCE (Esperar 4s para agrupar mensagens)
+        // 3. DEBOUNCE (Esperar 3s para agrupar mensagens)
         if (userMsgId && !text.startsWith('/start')) {
-            // Não debounce mensagens de sistema ou /start
-            await new Promise(r => setTimeout(r, 4000));
+            // Feedback VISUAL imediato: "Digitando..."
+            await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendChatAction`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, action: 'typing' })
+            });
+
+            // Aguarda para agrupar floods
+            await new Promise(r => setTimeout(r, 3000));
 
             const { data: latestMsg } = await supabase.from('messages')
                 .select('id')
                 .eq('session_id', session.id)
                 .eq('sender', 'user')
-                .order('created_at', { ascending: false })
+                .order('telegram_message_id', { ascending: false })
                 .limit(1)
                 .single();
 
@@ -303,8 +321,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
 
-        // 3. Carregar Histórico (Ordenado por DATA para garantir sequência correta)
-        const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('created_at', { ascending: false }).limit(50);
+        // 3. Carregar Histórico (Ordenado por ID do Telegram para garantir sequência correta)
+        const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('telegram_message_id', { ascending: false }).limit(50);
 
         // --- AGRUPAMENTO DE MENSAGENS (FLOOD) ---
         // msgHistory[0] é a mais recente. Vamos pegar todas as msgs de 'user' consecutivas do início do array.
@@ -344,7 +362,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             model: "gemini-2.5-flash",
             config: {
                 systemInstruction: systemPrompt,
-                temperature: 1.1,
+                temperature: 0.5,
                 topK: 40,
                 topP: 0.95,
                 responseMimeType: "application/json",

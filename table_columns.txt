@@ -1,2 +1,2 @@
 Sessions columns: id, created_at, user_name, user_city, device_type, lead_score, status, last_message_at, telegram_chat_id, bot_id
-Messages columns: id, session_id, created_at, sender, content, media_url, media_type, is_internal_thought, telegram_message_id
+Messages columns: id, session_id, created_at, sender, content, media_url, media_type, is_internal_thought, telegram_message_id, payment_data
