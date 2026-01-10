@@ -260,8 +260,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // 2. Salvar Msg Usuário
+        let userMsgId = null;
         if (!text.startsWith('[SYSTEM:')) {
-            await supabase.from('messages').insert([{ session_id: session.id, sender: 'user', content: text }]);
+            const { data: insMsg } = await supabase.from('messages').insert([{ session_id: session.id, sender: 'user', content: text }]).select('id').single();
+            userMsgId = insMsg?.id;
+        }
+
+        // 3. DEBOUNCE (Esperar 7s para agrupar mensagens)
+        if (userMsgId && !text.startsWith('/start')) {
+            // Não debounce mensagens de sistema ou /start
+            await new Promise(r => setTimeout(r, 7000));
+
+            const { data: latestMsg } = await supabase.from('messages')
+                .select('id')
+                .eq('session_id', session.id)
+                .eq('sender', 'user')
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .single();
+
+            // Se existir uma mensagem MAIS RECENTE que a atual, abortamos esta execução.
+            // A execução da mensagem mais recente vai cuidar de responder tudo junto.
+            if (latestMsg && latestMsg.id !== userMsgId) {
+                console.log(`Debounce: Nova mensagem encontrada (${latestMsg.id}), abortando thread antiga (${userMsgId}).`);
+                return res.status(200).send('ok');
+            }
         }
 
         // 3. Carregar Histórico
