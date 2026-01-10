@@ -8,11 +8,14 @@ const supabase = createClient(
 );
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    if (req.method !== 'POST') {
+    const isPost = req.method === 'POST';
+    const isGet = req.method === 'GET';
+
+    if (!isPost && !isGet) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const { botId } = req.body;
+    const botId = (req.body?.botId || req.query?.botId) as string;
 
     const { data: bot, error } = await supabase
         .from('telegram_bots')
