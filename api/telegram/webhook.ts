@@ -276,14 +276,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 .select('id')
                 .eq('session_id', session.id)
                 .eq('sender', 'user')
-                .order('created_at', { ascending: false })
+                .order('id', { ascending: false })
                 .limit(1)
                 .single();
 
-            // Se existir uma mensagem MAIS RECENTE que a atual, abortamos esta execução.
-            // A execução da mensagem mais recente vai cuidar de responder tudo junto.
+            console.log(`[Debounce] MsgID: ${userMsgId} | Latest: ${latestMsg?.id}`);
+
+            // Se existir uma mensagem MAIS RECENTE (ID maior), abortamos.
             if (latestMsg && latestMsg.id !== userMsgId) {
-                console.log(`Debounce: Nova mensagem encontrada (${latestMsg.id}), abortando thread antiga (${userMsgId}).`);
+                console.log(`[Debounce] Abortando thread ${userMsgId} em favor de ${latestMsg.id}`);
                 return res.status(200).send('ok');
             }
         }
