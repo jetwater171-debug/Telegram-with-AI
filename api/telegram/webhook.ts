@@ -302,15 +302,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             });
 
             // Aguarda para agrupar floods
-            await new Promise(r => setTimeout(r, 3000));
+            await new Promise(r => setTimeout(r, 6000));
 
             const { data: latestMsg } = await supabase.from('messages')
-                .select('id')
+                .select('id, telegram_message_id')
                 .eq('session_id', session.id)
                 .eq('sender', 'user')
                 .order('telegram_message_id', { ascending: false })
                 .limit(1)
                 .single();
+
+            console.log(`[Debounce] Current MsgID: ${userMsgId} | Latest MsgID: ${latestMsg?.id} | Latest TelID: ${latestMsg?.telegram_message_id}`);
 
             console.log(`[Debounce] MsgID: ${userMsgId} | Latest: ${latestMsg?.id}`);
 
