@@ -30,29 +30,7 @@ const createPayment = async (value: number, name: string) => {
     }
 }
 
-// ... inside handler ...
 
-if (aiResponse.action === 'generate_pix_payment') {
-    const price = aiResponse.payment_details?.value || 31.00;
-    const pixData = await createPayment(price, session.user_name || "Amor");
-
-    if (pixData && pixData.pixCopiaCola) {
-        // Add Pix messages
-        aiResponse.messages.push(`Tá aqui amor seu Pix de R$ ${price.toFixed(2)}:`);
-        aiResponse.messages.push(pixData.pixCopiaCola);
-        aiResponse.messages.push("Copia e cola no banco tá? Tô esperando...");
-
-        paymentDataToSave = {
-            paymentId: pixData.paymentId,
-            pixCopiaCola: pixData.pixCopiaCola,
-            value: price,
-            status: 'pending'
-        };
-    } else {
-        const debugError = pixData?.error ? ` (${pixData.error})` : "";
-        aiResponse.messages.push(`Amor o sistema do banco tá fora do ar agora... tenta daqui a pouco? :(${debugError}`);
-    }
-}
 
 const getPaymentStatus = async (paymentId: string) => {
     try {
@@ -292,7 +270,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     status: 'pending'
                 };
             } else {
-                aiResponse.messages.push("Amor o sistema do banco tá fora do ar agora... tenta daqui a pouco? :(");
+                const debugError = pixData?.error ? ` (${pixData.error})` : "";
+                aiResponse.messages.push(`Amor o sistema do banco tá fora do ar agora... tenta daqui a pouco? :(${debugError})`);
             }
         } else if (aiResponse.action === 'check_payment_status') {
             // Check status logic
