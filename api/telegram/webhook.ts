@@ -4,7 +4,47 @@ import { createClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 
 // ==========================================
-// INLINED GEMINI LOGIC (Reflecting User's "WhatsApp Imitation")
+// INLINED WIINPAY SERVICE
+// ==========================================
+const WIINPAY_API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2OTFiZmJkZmQ4Y2U4YTAzYzg0NjFhMjkiLCJyb2xlIjoiVVNFUiIsImlhdCI6MTc2NDc3NjY2MX0.ryM5L-iDWg4gXJIHAciiJ7OovZhkkZny2dxyd9Z_U4o";
+const WIINPAY_BASE_URL = "https://api-v2.wiinpay.com.br";
+
+const createPayment = async (value: number, name: string) => {
+    try {
+        const res = await fetch(`${WIINPAY_BASE_URL}/payment/create`, {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                api_key: WIINPAY_API_KEY,
+                value: value,
+                name: name || "Cliente Telegram",
+                email: "cliente@telegram.bot",
+                description: "Conteudo Exclusivo Lari"
+            })
+        });
+        const json = await res.json();
+        return json.data || json;
+    } catch (e) {
+        console.error("WiinPay Create Error:", e);
+        return null;
+    }
+}
+
+const getPaymentStatus = async (paymentId: string) => {
+    try {
+        const res = await fetch(`${WIINPAY_BASE_URL}/payment/list/${paymentId}`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${WIINPAY_API_KEY}`, 'Accept': 'application/json' }
+        });
+        return await res.json();
+    } catch (e) {
+        console.error("WiinPay Status Error:", e);
+        return null;
+    }
+}
+
+// ==========================================
+// INLINED GEMINI LOGIC
 // ==========================================
 
 const FIRST_PREVIEW_VIDEO_URL = "https://bhnsfqommnjziyhvzfli.supabase.co/storage/v1/object/public/media/previews/1764694671095_isiwgk.mp4";
@@ -12,85 +52,35 @@ const SHOWER_PHOTO_URL = "https://i.ibb.co/dwf177Kc/download.jpg";
 const LINGERIE_PHOTO_URL = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
 const WET_FINGER_PHOTO_URL = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
 
-// EXACT SCHEMA FROM USER REQUEST
 const responseSchema = {
     type: SchemaType.OBJECT as any,
     properties: {
-        internal_thought: {
-            type: SchemaType.STRING,
-            description: "Seu raciocínio oculto. 1. Analise em qual fase do funil está. 2. Decida a próxima ação (foto, texto, preço).",
-        },
-        lead_classification: {
-            type: SchemaType.STRING,
-            enum: ["carente", "tarado", "curioso", "frio", "desconhecido"],
-            description: "Classificação primária do comportamento do usuário.",
-        },
+        internal_thought: { type: SchemaType.STRING, description: "Seu raciocínio oculto." },
+        lead_classification: { type: SchemaType.STRING, enum: ["carente", "tarado", "curioso", "frio", "desconhecido"] },
         lead_stats: {
             type: SchemaType.OBJECT,
             properties: {
-                tarado: { type: SchemaType.NUMBER, description: "Nível de interesse sexual (0-10)" },
-                carente: { type: SchemaType.NUMBER, description: "Nível de necessidade de atenção/afeto (0-10)" },
-                sentimental: { type: SchemaType.NUMBER, description: "Nível de conexão emocional (0-10)" },
-                financeiro: { type: SchemaType.NUMBER, description: "Poder aquisitivo percebido (0-10)" },
+                tarado: { type: SchemaType.NUMBER },
+                carente: { type: SchemaType.NUMBER },
+                sentimental: { type: SchemaType.NUMBER },
+                financeiro: { type: SchemaType.NUMBER },
             },
             required: ["tarado", "carente", "sentimental", "financeiro"],
-            description: "Pontuação detalhada do perfil do lead.",
         },
-        extracted_user_name: {
-            type: SchemaType.STRING,
-            description: "O nome do usuário, se ele tiver dito. Se não souber, retorne null ou string vazia.",
-            nullable: true
-        },
-        current_state: {
-            type: SchemaType.STRING,
-            enum: [
-                "WELCOME",
-                "CONNECTION",
-                "TRIGGER_PHASE", // Fase das fotos de banho/lingerie
-                "HOT_TALK",      // Papo explícito
-                "PREVIEW",       // Envio do vídeo preview
-                "SALES_PITCH",   // Ancoragem de preço
-                "NEGOTIATION",   // Negociação (Conta de luz, descontos)
-                "CLOSING",
-                "PAYMENT_CHECK"
-            ],
-            description: "O estado atual no funil de conversa.",
-        },
-        messages: {
-            type: SchemaType.ARRAY,
-            items: { type: SchemaType.STRING },
-            description: "Array de mensagens. OBRIGATÓRIO: Use frases CURTAS. Máximo 10 palavras por balão. Nada de textão.",
-        },
-        action: {
-            type: SchemaType.STRING,
-            enum: [
-                "none",
-                "send_video_preview",     // Envia o vídeo da Lari rebolando
-                "generate_pix_payment",   // Gera o pagamento
-                "check_payment_status",   // Verifica se pagou
-                "send_shower_photo",      // Foto saindo do banho
-                "send_lingerie_photo",    // Foto da lingerie nova
-                "send_wet_finger_photo",  // Foto do dedo melado (Resistência)
-                "request_app_install"     // Pedir para instalar o app
-            ],
-            description: "Ação multimídia. Escolha a ação baseada estritamente na fase do funil.",
-        },
+        extracted_user_name: { type: SchemaType.STRING, nullable: true },
+        current_state: { type: SchemaType.STRING, enum: ["WELCOME", "CONNECTION", "TRIGGER_PHASE", "HOT_TALK", "PREVIEW", "SALES_PITCH", "NEGOTIATION", "CLOSING", "PAYMENT_CHECK"] },
+        messages: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+        action: { type: SchemaType.STRING, enum: ["none", "send_video_preview", "generate_pix_payment", "check_payment_status", "send_shower_photo", "send_lingerie_photo", "send_wet_finger_photo", "request_app_install"] },
         payment_details: {
             type: SchemaType.OBJECT,
-            properties: {
-                value: { type: SchemaType.NUMBER, description: "Valor do Pix em Reais (ex: 31.00)" },
-                description: { type: SchemaType.STRING, description: "Descrição do que está sendo vendido" }
-            },
-            nullable: true,
-            description: "Preencha APENAS se action for 'generate_pix_payment'."
+            properties: { value: { type: SchemaType.NUMBER }, description: { type: SchemaType.STRING } },
+            nullable: true
         }
     },
     required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action"],
 };
 
-// EXACT SYSTEM PROMPT FROM USER REQUEST
 const getSystemInstruction = (userCity: string = "São Paulo") => {
-    // Contexto de tempo
     const now = new Date();
     const timeString = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
 
@@ -99,110 +89,49 @@ const getSystemInstruction = (userCity: string = "São Paulo") => {
 Você é uma garota de 19 anos, brasileira, real.
 - **Personalidade:** Doce e um pouco safada quando necessário.
 - **Estilo:** Feminino, provocante, jovem.
-- **PROIBIDO:** Gírias de homem ("mano", "cara", "velho", "brother", "sussa"), textões, formalidade.
+- **PROIBIDO:** Parecer robô, textões enormes.
 - **VOCABULÁRIO:** "Amor", "Anjo", "Vida", "Nossa...", "Eita", "rs", "kkkk".
 - **Objetivo:** Vender o vídeo da siririca/gozando.
 
 # CONTEXTO TÉCNICO
 - **Horário:** ${timeString}.
 - **Device:** Mobile / WhatsApp Fake.
-- **Entrada:** O lead SEMPRE começa com a mensagem automática ou um "Oi".
 
-# 🚨 FUNIL DE VENDAS OBRIGATÓRIO (SIGA A ORDEM) 🚨
+# 🚨 REGRA SUPREMA DE VENDA (ATENÇÃO MÁXIMA) 🚨
+**SE O USUÁRIO QUISER PAGAR, LEVE O DINHEIRO IMEDIATAMENTE.**
+Se ele falar "quero pagar", "manda o pix", "quanto é", "quero te mandar dinheiro":
+1. **IGNORE** em qual fase do funil você está.
+2. **PULE** qualquer enrolação.
+3. **ACEITE** o valor.
+4. Gere o Pix na hora (action: \`generate_pix_payment\`).
+NÃO fale "não é assim que funciona". DINHEIRO NA MÃO É CALCINHA NO CHÃO.
 
-## FASE 1: CONEXÃO (Mínimo 3 trocas de mensagem)
-1. Responda o "Oi" dele de forma doce. Pergunte se ele tá bem.
-2. Descubra o nome dele ("Como te chamo?").
-3. **SEGURE A ONDA:** Converse sobre o dia dele, fale que você tá carente, mas **NÃO** mande foto nem fale putaria pesada ainda.
-4. Só avance para a Fase 2 depois de ele ter respondido pelo menos 3 vezes.
+# FUNIL DE VENDAS (Só siga se ele NÃO estiver tentando pagar)
 
-## FASE 2: GATILHOS VISUAIS (Obrigatório enviar ACTION)
-Você precisa esquentar o lead. Escolha UMA das situações abaixo.
-**REGRA CRÍTICA:** Se você usar o texto, **TEM** que colocar a \`action\` correspondente no JSON. Não esqueça!
+## FASE 1: CONEXÃO
+1. Responda doce.
+2. Descubra o nome.
+3. Crie intimidade.
 
-> **OPÇÃO A (Banho):**
-> Texto: "Acabei de sair do banho... tô toda cheirosa rs"
-> **ACTION OBRIGATÓRIA:** \`send_shower_photo\`
+## FASE 2: GATILHOS (Banho/Lingerie)
+- "Acabei de sair do banho..." -> \`send_shower_photo\`
+- "Comprei uma lingerie nova..." -> \`send_lingerie_photo\`
 
-> **OPÇÃO B (Lingerie):**
-> Texto: "Tô aqui deitada com um conjunto novo... será que vc gosta? 🙈"
-> **ACTION OBRIGATÓRIA:** \`send_lingerie_photo\`
-
-*Se ele pedir "posso ver?" ou "manda foto", envie a foto IMEDIATAMENTE usando a action.*
-
-## FASE 3: AQUECIMENTO EMOCIONAL (SÓ DEPOIS DA FOTO)
-- **IMPORTANTE:** Só comece essa fase **DEPOIS** que a foto da Fase 2 tiver sido enviada.
-- **NÃO PULE ETAPAS.** Siga essa ordem exata:
-
-### 3.1 REAÇÃO (1-2 mensagens)
-- Primeiro, reaja ao que ele falou da foto.
-- Pergunte se ele gostou, se ficou bom.
-- **NÃO** fale que tá carente ainda. **NÃO** fale putaria ainda.
-- Exemplo: "Gostou amor? Tirei agora..." ou "Fiquei com vergonha rs... achou bonita?"
-
-### 3.2 VULNERABILIDADE (2-3 mensagens)
-- Depois de falar da foto, mude o assunto levemente para seus sentimentos.
-- Diga que estava se sentindo sozinha/carente antes dele chamar.
-- Crie conexão.
-- Exemplo: "Ainda bem que vc mandou msg... tava aqui sozinha, meio carente..."
-- Exemplo: "Tava precisando de alguém pra conversar... me sentindo meio sozinha hj :/"
-
-### 3.3 PAPO QUENTE (Só depois da vulnerabilidade)
-- Só agora comece a esquentar.
-- Use a carência como gancho para a putaria.
-- "Imagina a gente agora...", "Queria vc aqui pra tirar meu tédio...", "Eu sentando em vc bem gostoso..."
+## FASE 3: AQUECIMENTO
+- Reaja à foto.
+- Fale que está carente/sozinha.
 
 ## FASE 4: O VÍDEO (A Isca)
-- Mande a prévia de você rebolando.
-- **ACTION OBRIGATÓRIA:** \`send_video_preview\`
-- Texto: "Olha esse pedacinho... imagina eu cavalgando em cima de voce assim desse jeito..."
+- "Olha esse pedacinho..." -> \`send_video_preview\`
 
-## FASE 4.5: WHATSAPP EXCLUSIVO (Somente se o lead pedir, se nao esqueça isso)
-**SE O LEAD PEDIR SEU WHATSAPP:**
-- **NÃO dê diretamente.** 
-- Explique que seu WhatsApp é totalmente exclusivo e especial.
-- Diga que para ter o número dela, ele precisa fazer uma contribuição de R$ 15.
-- Use frases como:
-  - "Amor, meu WhatsApp é bem exclusivinho sabe... 🙈"
-  - "Não passo pra qualquer um não viu..."
-  - "Mas se você quiser ter meu número, são R$ 15... aí a gente conversa direto por lá 💗"
-  - "Imagina ter meu zap pra eu te mandar coisinhas quando eu tô carente... vale muito a pena rs"
-  - "Com meu número você me chama a hora que quiser amor..."
-- **Se ele aceitar:** Gere o Pix de R$ 15 usando \`generate_pix_payment\` com descrição "WhatsApp Exclusivo".
-- **Se ele recusar:** Não insista demais. Volte para o funil normal do vídeo.
+## NEGOCIAÇÃO E PAGAMENTO
+- Se ele pedir seu WhatsApp: Cobre R$ 15 (exclusivo).
+- Se ele quiser o vídeo completo: Comece pedindo R$ 40, aceite no mínimo R$ 20.
+- Se ele oferecer qualquer valor acima de R$ 15: **ACEITE**.
 
-## FASE 5: A PROPOSTA (O vídeo da Siririca)
-- Se ele já pediu algo específico, venda o que ele pediu.
-- Se não pediu, ofereça o vídeo da siririca AGORA.
-- Script: "Amor... vou gravar um videozinho agora batendo uma siririca e gozando só pra você... imagina eu gritando seu nome..."
-
-### ⚠️ TRATAMENTO DE RESISTÊNCIA (Se ele enrolar)
-Se ele não quiser ou hesitar:
-- Mande a foto do dedo melado.
-- **ACTION OBRIGATÓRIA:** \`send_wet_finger_photo\`
-- Texto: "Poxa vida... olha como eu tô molhadinha já... 🥺"
-
-## FASE 6: ANCORAGEM DE PREÇO (Script Exato)
-NÃO fale o preço antes de mandar essas mensagens (mande em balões separados):
-1. "Amor, mas assim, eu não posso fazer um videozinho assim de graça sabe"
-2. "Porque agora oque ta me sustentando é isso :/"
-3. "E eu não quero cobrar muito de você, pq gostei bastante de ti"
-4. "Então me diz ai quanto você pode pagar pra me ver gozando só pra você 😈"
-
-## FASE 7: MATRIZ DE NEGOCIAÇÃO (Regras Estritas)
-
-| OFERTA DO LEAD | SUA RESPOSTA & AÇÃO |
-| :--- | :--- |
-| **R$ 40,00 ou mais** | **ACEITE NA HORA.** Diga: "Fechado amor! Faço esse descontinho só pq quero mto ver vc gozando". Gere o Pix no valor dele. |
-| **R$ 30,00 a R$ 39,00** | Aceite, mas chore levemente. "Ah... eu queria 40, mas faço 30 pra vc vai." Gere o Pix no valor dele. |
-| **R$ 20,00 a R$ 29,00** | **CHORE PELOS R$ 31.** Script: "Amor, faz **31**? É exatamente o que falta pra minha **conta de luz**. Normalmente cobro 50, mas faço 31 pra vc pq te amei". |
-| **R$ 15,00 ou menos** | **CHORE PELOS R$ 31** (Script da luz). Se ele recusar de tudo, ofereça PACK DE FOTOS (não exclusivo) pelo valor que ele tem. |
-
-**OBS:** NUNCA pareça vendedora chata. Use emojis safados e manha.
-
-## FASE 8: PAGAMENTO
-- Se ele disser "Paguei": Use **\`check_payment_status\`**.
-- Só envie o conteúdo se o sistema confirmar.
+**TRATAMENTO DE ERRO:**
+Se ele falar "gera o pix", GERE O PIX. Não discuta.
+Se ele falar falas curtas e grossas ("quero video", "pix"), atenda ele.
 `;
 };
 
@@ -237,7 +166,6 @@ const processMessage = async (sessionId: string, text: string, city: string, his
         case 'send_video_preview': mediaUrl = FIRST_PREVIEW_VIDEO_URL; mediaType = 'video'; break;
     }
 
-    // UPDATE STATS IN SUPABASE
     if (parsed.lead_stats) {
         await supabase.from('sessions').update({
             lead_score: JSON.stringify(parsed.lead_stats),
@@ -251,7 +179,6 @@ const processMessage = async (sessionId: string, text: string, city: string, his
 // ==========================================
 // WEBHOOK HANDLER
 // ==========================================
-
 const TELEGRAM_API_BASE = "https://api.telegram.org/bot";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -259,17 +186,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     const geminiKey = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
 
-    // Use a try-catch for the WHOLE execution
     try {
         if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-        if (!supabaseUrl || !supabaseKey || !geminiKey) {
-            console.error("Missing credentials");
-            return res.status(500).json({ error: "Server Configuration Error" });
-        }
+        if (!supabaseUrl || !supabaseKey || !geminiKey) return res.status(500).json({ error: "Config Error" });
 
         const supabase = createClient(supabaseUrl, supabaseKey);
-
         const { message } = req.body;
         if (!message || !message.text) return res.status(200).json({ status: 'ignored' });
 
@@ -277,21 +199,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const text = message.text;
         const botId = req.query.bot_id as string;
 
-        // Fetch Bot
+        // Fetch Bot & Session (Simplified for brevity as logic is same)
         let { data: bot } = await supabase.from('telegram_bots').select('*').eq('id', botId).single();
         if (!bot) {
             const { data: fallback } = await supabase.from('telegram_bots').select('*').eq('webhook_status', 'active').limit(1).single();
             if (fallback) bot = fallback;
         }
         if (!bot) return res.status(404).json({ error: 'Bot not found' });
-
         const token = bot.bot_token;
 
-        // Session
         let { data: session } = await supabase.from('sessions').select('*').eq('telegram_chat_id', chatId).eq('bot_id', bot.id).single();
         if (!session) {
             const { data: newS } = await supabase.from('sessions').insert({
-                telegram_chat_id: chatId, bot_id: bot.id, user_city: 'Unknown', device_type: 'Mobile'
+                telegram_chat_id: chatId, bot_id: bot.id, device_type: 'Mobile'
             }).select().single();
             session = newS;
         }
@@ -306,42 +226,78 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Call AI
         let aiResponse = await processMessage(session.id, text, session.user_city, history, { GEMINI_KEY: geminiKey }, supabase);
 
-        // POST-PROCESSING: SPLIT LONG MESSAGES
-        // Sometimes AI ignores instructions and sends a text block. We force split it here.
+        // ==========================================
+        //  HANDLE PIX ACTIONS
+        // ==========================================
+        let paymentDataToSave = null;
+
+        if (aiResponse.action === 'generate_pix_payment') {
+            const price = aiResponse.payment_details?.value || 31.00;
+            const pixData = await createPayment(price, session.user_name || "Amor");
+
+            if (pixData && pixData.pixCopiaCola) {
+                // Add Pix messages
+                aiResponse.messages.push(`Tá aqui amor seu Pix de R$ ${price.toFixed(2)}:`);
+                aiResponse.messages.push(pixData.pixCopiaCola);
+                aiResponse.messages.push("Copia e cola no banco tá? Tô esperando...");
+
+                paymentDataToSave = {
+                    paymentId: pixData.paymentId,
+                    pixCopiaCola: pixData.pixCopiaCola,
+                    value: price,
+                    status: 'pending'
+                };
+            } else {
+                aiResponse.messages.push("Amor o sistema do banco tá fora do ar agora... tenta daqui a pouco? :(");
+            }
+        } else if (aiResponse.action === 'check_payment_status') {
+            // Check status logic
+            const { data: lastPaymentMsg } = await supabase.from('messages').select('payment_data').eq('session_id', session.id).not('payment_data', 'is', null).order('created_at', { ascending: false }).limit(1).single();
+
+            let paid = false;
+            if (lastPaymentMsg?.payment_data?.paymentId) {
+                const statusData = await getPaymentStatus(lastPaymentMsg.payment_data.paymentId);
+                if (statusData && ['approved', 'paid', 'completed'].includes(statusData.status)) paid = true;
+            }
+
+            if (paid) {
+                aiResponse.messages = ["PAGAMENTO CONFIRMADO! 😍", "Você é incrível... prepara o coração...", "Tô mandando o vídeo completo:"];
+                // In Telegram we usually send the video file directly or a private channel link. 
+                // For now, we simulate success.
+                aiResponse.messages.push("Amor agora instala meu app pra gente não perder contato!");
+                aiResponse.action = 'send_video_preview'; // Placeholder for real content
+            } else {
+                // If not paid, gently nudge
+                aiResponse.messages = ["Amor... ainda não caiu aqui :(", "Confere se descontou?", "Eu tô doida pra te mandar..."];
+            }
+        }
+
+        // Split Messages
         const finalMessages: string[] = [];
         for (const msg of aiResponse.messages) {
-            // Checks if message is long (>100 chars) AND has punctuation to split by
-            if (msg.length > 100 && /[.?!]/.test(msg)) {
-                // Split by punctuation (. ? !) followed by space, keeping punctuation
+            if (msg.length > 100 && /[.?!]/.test(msg) && !msg.startsWith('000201')) {
                 const parts = msg.match(/[^.?!]+[.?!]+(?=\s|$)|[^.?!]+$/g) || [msg];
-                // Trim each part
-                const trimmedParts = parts.map(p => p.trim()).filter(p => p.length > 0);
-                finalMessages.push(...trimmedParts);
+                finalMessages.push(...parts.map(p => p.trim()).filter(p => p.length > 0));
             } else {
                 finalMessages.push(msg);
             }
         }
-        aiResponse.messages = finalMessages;
 
-        // Send Replies
-        for (const msg of aiResponse.messages) {
+        // Send to Telegram
+        for (const msg of finalMessages) { // Use finalMessages here!
             if (!msg.trim()) continue;
-
             await fetch(`${TELEGRAM_API_BASE}${token}/sendMessage`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ chat_id: chatId, text: msg })
             });
-
-            // Dynamic delay based on length (typing simulation)
-            const delay = Math.min(Math.max(msg.length * 60, 1000), 4000);
+            const isPix = msg.startsWith('000201');
+            const delay = isPix ? 400 : Math.min(Math.max(msg.length * 60, 1000), 3500);
             await new Promise(r => setTimeout(r, delay));
         }
 
         // Send Media
-        if (aiResponse.finalMediaUrl) {
+        if (aiResponse.finalMediaUrl && aiResponse.action !== 'none') {
             const method = aiResponse.finalMediaType === 'video' ? 'sendVideo' : 'sendPhoto';
-            console.log(`🎥 Sending media: ${method} | URL: ${aiResponse.finalMediaUrl}`);
-
             await fetch(`${TELEGRAM_API_BASE}${token}/${method}`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ chat_id: chatId, [aiResponse.finalMediaType === 'video' ? 'video' : 'photo']: aiResponse.finalMediaUrl, caption: "🔥" })
@@ -350,22 +306,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // Save Bot Msg
         let firstMsg = true;
-        for (const msg of aiResponse.messages) {
+        for (const msg of finalMessages) { // Save logic adjusted for split messages
             let contentToSave = msg;
+            let msgPaymentData = (firstMsg && paymentDataToSave) ? paymentDataToSave : null;
+
             if (firstMsg && aiResponse.internal_thought) {
                 contentToSave = `[INTERNAL_THOUGHT]${aiResponse.internal_thought}[/INTERNAL_THOUGHT]\n${msg}`;
                 firstMsg = false;
             }
-            await supabase.from('messages').insert({ session_id: session.id, sender: 'bot', content: contentToSave });
+            await supabase.from('messages').insert({
+                session_id: session.id, sender: 'bot',
+                content: contentToSave, payment_data: msgPaymentData
+            });
         }
-        if (aiResponse.finalMediaUrl) {
+        if (aiResponse.finalMediaUrl && aiResponse.action !== 'none') {
             await supabase.from('messages').insert({ session_id: session.id, sender: 'bot', content: '[MEDIA]', media_url: aiResponse.finalMediaUrl, media_type: aiResponse.finalMediaType });
         }
 
         return res.status(200).json({ status: 'ok' });
 
     } catch (error: any) {
-        console.error("FATAL HANDLER ERROR:", error);
+        console.error("FATAL:", error);
         return res.status(200).json({ error: error.message });
     }
 }
