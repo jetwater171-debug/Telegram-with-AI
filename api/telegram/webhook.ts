@@ -276,10 +276,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             userMsgId = insMsg?.id;
         }
 
-        // 3. DEBOUNCE (Esperar 7s para agrupar mensagens)
+        // 3. DEBOUNCE (Esperar 6s para agrupar mensagens)
         if (userMsgId && !text.startsWith('/start')) {
             // Não debounce mensagens de sistema ou /start
-            await new Promise(r => setTimeout(r, 7000));
+            await new Promise(r => setTimeout(r, 6000));
 
             const { data: latestMsg } = await supabase.from('messages')
                 .select('id')
