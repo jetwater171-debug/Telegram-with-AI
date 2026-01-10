@@ -135,6 +135,11 @@ Se ele falar falas curtas e grossas ("quero video", "pix"), atenda ele.
 `;
 };
 
+// Helper to clean JSON text (remove markdown codes)
+const cleanJson = (text: string) => {
+    return text.replace(/```json/g, '').replace(/```/g, '').trim();
+};
+
 const processMessage = async (sessionId: string, text: string, city: string, history: any[], env: any, supabase: any) => {
     const genAI = new GoogleGenerativeAI(env.GEMINI_KEY);
     const model = genAI.getGenerativeModel({
@@ -153,7 +158,22 @@ const processMessage = async (sessionId: string, text: string, city: string, his
 
     const result = await chat.sendMessage(text);
     const responseText = result.response.text();
-    const parsed = JSON.parse(responseText);
+
+    let parsed: any = {};
+    try {
+        parsed = JSON.parse(cleanJson(responseText));
+    } catch (e) {
+        console.error("JSON PARSE ERROR:", responseText);
+        // Fallback response if AI goes crazy
+        return {
+            internal_thought: "Error parsing AI response",
+            lead_classification: "desconhecido",
+            lead_stats: { tarado: 5, carente: 5, sentimental: 5, financeiro: 5 },
+            current_state: "CONNECTION",
+            messages: ["Amor, não entendi... fala de novo?"],
+            action: "none"
+        };
+    }
 
     // Resolve media URLs based on action
     let mediaUrl = undefined;
