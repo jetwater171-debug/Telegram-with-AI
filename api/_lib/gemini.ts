@@ -23,11 +23,7 @@ export interface AIResponse {
     };
 }
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const genAiKey = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-
-const supabase = createClient(supabaseUrl!, supabaseKey!);
+// Hardcoded URLs from original service
 
 // Hardcoded URLs from original service
 const FIRST_PREVIEW_VIDEO_URL = "https://bhnsfqommnjziyhvzfli.supabase.co/storage/v1/object/public/media/previews/1764694671095_isiwgk.mp4";
@@ -236,9 +232,17 @@ export const processMessage = async (
     userCity: string,
     history: any[]
 ) => {
-    if (!genAiKey) throw new Error("Missing Gemini Key");
+    // Lazy load env vars to avoid import-time crashes
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const genAiKey = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
 
+    if (!supabaseUrl || !supabaseKey) throw new Error("Missing Supabase credentials in gemini.ts");
+    if (!genAiKey) throw new Error("Missing Gemini Key in gemini.ts");
+
+    const supabase = createClient(supabaseUrl, supabaseKey);
     const genAI = new GoogleGenerativeAI(genAiKey);
+
     const model = genAI.getGenerativeModel({
         model: "gemini-2.5-flash",
         systemInstruction: getSystemInstruction(userCity),
