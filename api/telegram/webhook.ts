@@ -314,10 +314,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 contentToSave = `[INTERNAL_THOUGHT]${aiResponse.internal_thought}[/INTERNAL_THOUGHT]\n${msg}`;
                 firstMsg = false;
             }
-            await supabase.from('messages').insert({
-                session_id: session.id, sender: 'bot',
-                content: contentToSave, payment_data: msgPaymentData
-            });
+            try {
+                await supabase.from('messages').insert({
+                    session_id: session.id, sender: 'bot',
+                    content: contentToSave, payment_data: msgPaymentData
+                });
+            } catch (e) {
+                // Fallback for missing column
+                await supabase.from('messages').insert({
+                    session_id: session.id, sender: 'bot',
+                    content: contentToSave
+                });
+            }
         }
         if (aiResponse.finalMediaUrl && aiResponse.action !== 'none') {
             await supabase.from('messages').insert({ session_id: session.id, sender: 'bot', content: '[MEDIA]', media_url: aiResponse.finalMediaUrl, media_type: aiResponse.finalMediaType });
