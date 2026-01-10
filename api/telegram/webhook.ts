@@ -210,19 +210,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const systemPrompt = getSystemInstruction(session.user_name, stats, mediaList);
 
         const genAI = new GoogleGenAI({ apiKey: geminiKey });
-        const model = genAI.getGenerativeModel({
-            model: "gemini-2.0-flash", // Use stable model version
-            generationConfig: {
-                responseMimeType: "application/json",
-                responseSchema: responseSchema,
+
+        // Correct usage for @google/genai SDK
+        const chat = genAI.chats.create({
+            model: "gemini-2.5-flash",
+            config: {
+                systemInstruction: systemPrompt,
                 temperature: 1.0,
+                responseMimeType: "application/json",
+                responseSchema: responseSchema
             },
-            systemInstruction: systemPrompt
+            history: history
         });
 
-        const chat = model.startChat({ history: history });
-        const result = await chat.sendMessage(text);
-        const aiResponse = JSON.parse(result.response.text());
+        const result = await chat.sendMessage({ message: text });
+
+        let aiResponse;
+        try {
+            const rawText = result.text || "";
+            aiResponse = JSON.parse(rawText.replace(/```json/g, '').replace(/```/g, '').trim());
+        } catch (parseErr) {
+            console.error("Error parsing Gemini response:", parseErr);
+            const rawText = result.text || "";
+            // Fallback for simple text response if JSON fails
+            aiResponse = {
+                internal_thought: "Erro no parse JSON, respondendo simples.",
+                lead_classification: "desconhecido",
+                lead_stats: stats,
+                current_state: session.current_state || "WELCOME",
+                messages: [rawText.replace(/```json/g, '').replace(/```/g, '') || "..."],
+                action: "none"
+            };
+        }
 
         // 5. Processar Ações (Pagamento, Mídia)
         let mediaUrl, mediaType;

@@ -12,7 +12,7 @@ const supabase = createClient(url!, key!);
 async function run() {
     const { data: messages } = await supabase
         .from('messages')
-        .select('created_at, sender, content')
+        .select('*') // Select ALL columns to see if there's anything weird
         .order('created_at', { ascending: false })
         .limit(20);
 
@@ -20,12 +20,14 @@ async function run() {
     if (messages) {
         messages.forEach(m => {
             output += `[${m.created_at}] ${m.sender}: ${m.content.replace(/\n/g, ' ')}\n`;
+            // Log if payment_data exists
+            if (m.payment_data) output += `   > Payment Data: ${JSON.stringify(m.payment_data)}\n`;
         });
     } else {
         output = "No messages found or error fetching.";
     }
     fs.writeFileSync('debug_messages_plain.txt', output, 'utf8');
-    console.log("Done. Saved to debug_messages_plain.txt");
+    console.log("Done.");
 }
 
 run();
