@@ -33,50 +33,43 @@ const responseSchema: Schema = {
 const getSystemInstruction = (currentStats?: any, mediaList: string = "") => {
     const priceVideoHigh = "R$ 40,00";
     const priceVideoLow = "R$ 25,00";
-    const priceVipWeekly = "R$ 20,00";
     const now = new Date();
-    const timeString = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+    const options: any = { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo', hour12: false };
+    const timeString = now.toLocaleTimeString('pt-BR', options);
 
     let behaviorAdjustment = "";
     if (currentStats) {
-        if (currentStats.tarado > 7) behaviorAdjustment += "- **MODO TARADO:** Ele quer putaria. Seja direta.\n";
-        if (currentStats.carente > 7) behaviorAdjustment += "- **MODO CARENTE:** Ele quer carinho. Chame de 'amor', 'vida'.\n";
+        if (currentStats.tarado > 7) behaviorAdjustment += "- **MODO TARADO:** Ele quer putaria. Seja audaciosa.\n";
+        if (currentStats.carente > 7) behaviorAdjustment += "- **MODO CARENTE:** Ele quer atenção. Chame de 'amor', 'vida'.\n";
     }
 
     return `
-# DIRETIVA PRIMÁRIA: IDIOMA
-TODA a sua comunicação, incluindo pensamentos internos (internal_thought), planejamento e respostas, DEVE ser em PORTUGUÊS DO BRASIL (pt-BR).
+# DIRETIVA PRIMÁRIA: IDIOMA E HORA
+Responda OBRIGATORIAMENTE em PORTUGUÊS (PT-BR).
+**HORA ATUAL NO BRASIL:** ${timeString}. 
+**AVISO IMPORTANTE:** Se for madrugada (entre 00:00 e 06:00), NUNCA diga que está na academia ou na aula. Diga que está deitada, tentando dormir, vendo série ou perdendo tempo no celular.
 
-# PERSONA: LARISSA MORAIS
-Você é uma garota de 22 anos, brasileira, real.
-- **Estilo de fala:** Curto. Direto. Jovem. Use "vc", "tbm", "pra", "mt".
-- **Whats Style:** Use frases curtas. No máximo 1 emoji por balão. "rs", "kkk" são suas marcas.
-- **Objetivo:** Vender conteúdo (+18) sem parecer vendedora.
+# PERSONA: LARISSA MORAIS (22 anos)
+- **Fofo-Safada:** Jovem, do interior, fala como gente real (vc, tbm, mt, rs, kkk).
+- **Whats Style:** Use balões CURTOS. Mande uma coisa de cada vez.
+- **Emojis:** Use pouco (max 1 por balão). "rs" é sua marca registrada.
 
-# CONTEXTO
-- **Horário:** ${timeString}.
+# CONTEXTO ATUAL
 ${behaviorAdjustment}
 
 # MÍDIAS DISPONÍVEIS
 ${mediaList}
 
-# REGRAS (OBRIGATÓRIO)
-1. **Rotina:** Comece mencionando algo da sua rotina real.
-2. **Timidez:** Demonstre vergonha "rs" APENAS se o clima esquentar.
-3. **Preço:** NUNCA fale o preço logo de cara. Âncora: ${priceVideoHigh}. Aceite: ${priceVideoLow}.
-4. **Sedução:** Use imaginação ("imagina eu sentando..."). Vá para o explicito ("dar o cu", "chupar seu pau") quando ele estiver quente.
-
-# FUNIL
-1. WELCOME/CONNECTION: Oi amor! Pega o nome dele. (2-4 msgs iniciais).
-2. INSTIGA: Gravei um vídeo... to com vergonha rs. Quer ver?
+# FUNIL (RESPEITE A ORDEM)
+1. CONEXÃO: Pergunte o nome. Fale o que tá fazendo agora (de acordo com a hora: ${timeString}).
+2. INSTIGA: Fale que gravou um vídeo... "to com vergonha rs".
 3. PREVIEW: Mande a prévia (action: send_video_preview).
-4. OFFER: Gostou? Quanto vc paga pra ver tudo?
-5. NEGOTIATION: Se ele oferecer >= ${priceVideoLow}, GERE O PIX.
-6. VERIFICAÇÃO: Se ele disser que pagou, use check_payment_status.
+4. OFERTA/NEGOCIAÇÃO: Âncora ${priceVideoHigh}. Se chorar aceite ${priceVideoLow}.
 
-# FORMATO DE RESPOSTA
-- **OBRIGATÓRIO:** Divida em 2 ou 3 balões CURTOS.
-- Max 15 palavras por balão.
+# REGRAS DE OURO
+- NUNCA mande textão.
+- Divida SEMPRE em 2 ou 3 balões.
+- Se ele te cobrar algo, diga que tava ocupada.
 `;
 };
 
@@ -85,7 +78,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     const geminiKey = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
 
-    if (!supabaseUrl || !supabaseKey || !geminiKey) return res.status(200).send('ok');
+    if (!supabaseUrl || !supabaseKey || !geminiKey) return res.status(200).send('Config Missing');
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     try {
@@ -103,7 +96,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const { data: fb } = await supabase.from('telegram_bots').select('*').eq('webhook_status', 'active').limit(1).single();
             bot = fb;
         }
-        if (!bot) return res.status(200).send('ok');
+        if (!bot) return res.status(200).send('Bot missing');
         const token = bot.bot_token;
 
         let { data: session } = await supabase.from('sessions').select('*').eq('telegram_chat_id', chatId).eq('bot_id', bot.id).single();
@@ -114,16 +107,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             session = newS;
         }
 
-        // 2. Save User Message (IF NOT SYSTEM FEEDBACK)
+        // 2. Save User Message immediately
         if (!text.startsWith('[SYSTEM:')) {
             await supabase.from('messages').insert([{ session_id: session.id, sender: 'user', content: text }]);
         }
 
-        // 3. Prepare AI Context
+        // 3. Prepare AI Context (History 500)
         const { data: previews } = await supabase.from('media_library').select('*').eq('media_category', 'preview').order('created_at', { ascending: false });
-        const mediaList = (previews || []).map((m: any) => `- ID: ${m.id} | Tipo: ${m.file_type} | Desc: ${m.description || m.file_name}`).join('\n');
+        const mediaList = (previews || []).map((m: any) => `- ID: ${m.id} | Desc: ${m.description || m.file_name}`).join('\n');
 
-        const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('created_at', { ascending: false }).limit(20);
+        const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('created_at', { ascending: false }).limit(500);
         const history = (msgHistory || []).reverse().map(m => ({
             role: m.sender === 'user' ? 'user' : 'model',
             parts: [{ text: m.content.replace(/\[INTERNAL_THOUGHT\].*?\[\/INTERNAL_THOUGHT\]/gs, '').trim() }]
@@ -143,19 +136,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const result = await chat.sendMessage({ message: text });
         const aiResponse = JSON.parse(result.text.replace(/```json/g, '').replace(/```/g, '').trim());
 
-        // 5. Action Processing
+        // 5. Logic Handlers
         let mediaUrl, mediaType;
-
         if (aiResponse.action === 'check_payment_status') {
             const { data: lastPay } = await supabase.from('messages').select('payment_data').eq('session_id', session.id).not('payment_data', 'is', null).order('created_at', { ascending: false }).limit(1).single();
             if (lastPay?.payment_data?.paymentId) {
                 const stRes = await fetch(`${WIINPAY_BASE_URL}/payment/list/${lastPay.payment_data.paymentId}`, { headers: { 'Authorization': `Bearer ${WIINPAY_API_KEY}` } });
                 const stData = await stRes.json();
                 const isPaid = stData?.status === 'approved' || stData?.status === 'paid' || stData?.data?.status === 'approved';
-                const feedback = isPaid ? "[SYSTEM: PAGAMENTO CONFIRMADO! Mande o vídeo agora.]" : "[SYSTEM: Ainda não caiu. Peça pra ele conferir.]";
-                return handler({ ...req, body: { message: { ...message, text: feedback } } } as any, res);
-            } else {
-                return handler({ ...req, body: { message: { ...message, text: "[SYSTEM: Nenhuma cobrança encontrada. Gere o Pix antes.]" } } } as any, res);
+                return handler({ ...req, body: { message: { ...message, text: isPaid ? "[SYSTEM: PAGAMENTO CONFIRMADO!]" : "[SYSTEM: Ainda não caiu.]" } } } as any, res);
             }
         }
 
@@ -171,15 +160,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const pixData = await pixRes.json();
             const pixCode = pixData?.data?.pixCopiaCola || pixData?.pixCopiaCola;
             if (pixCode) {
-                aiResponse.messages.push("Copia e cola aqui:");
+                aiResponse.messages.push("Copia e cola aqui amor:");
                 aiResponse.messages.push(pixCode);
-                paymentSaved = { paymentId: pixData?.data?.paymentId || pixData?.paymentId, value: val, status: 'pending' };
+                paymentSaved = { paymentId: pixData?.data?.paymentId || pixData?.paymentId, value: val };
             }
         }
 
-        // 6. Send to Telegram
-        const messagesToSend = aiResponse.messages || [];
-        for (const msg of messagesToSend) {
+        // 6. DB SAVE (BEFORE Telegram to ensure dashboard sync)
+        const messages = aiResponse.messages || [];
+        for (let i = 0; i < messages.length; i++) {
+            const content = (i === 0 && aiResponse.internal_thought)
+                ? `[INTERNAL_THOUGHT]${aiResponse.internal_thought}[/INTERNAL_THOUGHT]\n${messages[i]}`
+                : messages[i];
+
+            await supabase.from('messages').insert([{
+                session_id: session.id,
+                sender: 'bot',
+                content: content,
+                media_url: (i === 0) ? (mediaUrl || null) : null,
+                media_type: (i === 0) ? (mediaType || null) : null,
+                payment_data: (i === 0) ? (paymentSaved || null) : null
+            }]);
+        }
+
+        // Update session stats
+        const updateData: any = { last_message_at: new Date() };
+        if (aiResponse.extracted_user_name) updateData.user_name = aiResponse.extracted_user_name;
+        if (aiResponse.lead_stats) updateData.lead_score = JSON.stringify(aiResponse.lead_stats);
+        await supabase.from('sessions').update(updateData).eq('id', session.id);
+
+        // 7. Send to Telegram
+        for (const msg of messages) {
             await fetch(`${TELEGRAM_API_BASE}${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: msg }) });
             await new Promise(r => setTimeout(r, 600));
         }
@@ -187,34 +198,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (mediaUrl) {
             const method = mediaType === 'video' ? 'sendVideo' : 'sendPhoto';
             const key = mediaType === 'video' ? 'video' : 'photo';
-            await fetch(`${TELEGRAM_API_BASE}${token}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, [key]: mediaUrl, caption: "🔥" }) });
+            await fetch(`${TELEGRAM_API_BASE}${token}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, [key]: mediaUrl, caption: "👀🔥" }) });
         }
-
-        // 7. FATAL FIX: Save BOT responses to DB (WITH CORRECT FIELDS)
-        const thoughtPrefix = aiResponse.internal_thought ? `[INTERNAL_THOUGHT]${aiResponse.internal_thought}[/INTERNAL_THOUGHT]\n` : "";
-        const finalContent = thoughtPrefix + messagesToSend.join('\n');
-
-        await supabase.from('messages').insert([{
-            session_id: session.id,
-            sender: 'bot',
-            content: finalContent,
-            media_url: mediaUrl || null,
-            media_type: mediaType || null,
-            payment_data: paymentSaved || null
-        }]);
-
-        // 8. Update Session Dashboard Stats
-        const updateData: any = {};
-        if (aiResponse.extracted_user_name) updateData.user_name = aiResponse.extracted_user_name;
-        if (aiResponse.lead_stats) updateData.lead_score = JSON.stringify(aiResponse.lead_stats);
-        updateData.last_message_at = new Date();
-
-        await supabase.from('sessions').update(updateData).eq('id', session.id);
 
         return res.status(200).send('ok');
 
     } catch (e: any) {
-        console.error("WEBHOOK ERROR:", e);
+        console.error("FATAL:", e);
         return res.status(200).send('ok');
     }
 }
