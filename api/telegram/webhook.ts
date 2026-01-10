@@ -236,21 +236,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const LINGERIE_PHOTO_URL = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
         const WET_FINGER_PHOTO_URL = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
 
+        // Helper para evitar duplicidade
+        const hasSentMedia = (url: string) => msgHistory?.some((m: any) => m.media_url === url);
+
         if (aiResponse.action === 'send_shower_photo') {
-            mediaUrl = SHOWER_PHOTO_URL;
-            mediaType = 'image';
+            if (!hasSentMedia(SHOWER_PHOTO_URL)) {
+                mediaUrl = SHOWER_PHOTO_URL;
+                mediaType = 'image';
+            }
         }
         else if (aiResponse.action === 'send_lingerie_photo') {
-            mediaUrl = LINGERIE_PHOTO_URL;
-            mediaType = 'image';
+            if (!hasSentMedia(LINGERIE_PHOTO_URL)) {
+                mediaUrl = LINGERIE_PHOTO_URL;
+                mediaType = 'image';
+            }
         }
         else if (aiResponse.action === 'send_wet_finger_photo') {
-            mediaUrl = WET_FINGER_PHOTO_URL;
-            mediaType = 'image';
+            if (!hasSentMedia(WET_FINGER_PHOTO_URL)) {
+                mediaUrl = WET_FINGER_PHOTO_URL;
+                mediaType = 'image';
+            }
         }
         else if (aiResponse.action === 'send_video_preview') {
-            mediaUrl = FIRST_PREVIEW_VIDEO_URL;
-            mediaType = 'video';
+            if (!hasSentMedia(FIRST_PREVIEW_VIDEO_URL)) {
+                mediaUrl = FIRST_PREVIEW_VIDEO_URL;
+                mediaType = 'video';
+            }
         }
         else if (aiResponse.action === 'check_payment_status') {
             const { data: lastPay } = await supabase.from('messages').select('payment_data').eq('session_id', session.id).not('payment_data', 'is', null).order('created_at', { ascending: false }).limit(1).single();
@@ -316,10 +327,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }).eq('id', session.id);
 
         // Envios Telegram
+        // Envios Telegram com Typing Realista
         if (aiResponse.messages) {
             for (const msg of aiResponse.messages) {
-                await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: msg }) });
-                await new Promise(r => setTimeout(r, 600 + Math.random() * 500)); // Delay humanizado leve
+                // 1. Enviar Status 'Digitando...'
+                await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendChatAction`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: chatId, action: 'typing' })
+                });
+
+                // 2. Calcular Delay Realista (60ms por caractere, min 1.5s, max 5s)
+                const typingDelay = Math.min(5000, Math.max(1500, msg.length * 60));
+                await new Promise(r => setTimeout(r, typingDelay));
+
+                // 3. Enviar Mensagem
+                await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: chatId, text: msg })
+                });
+
+                // 4. Pausa entre balões
+                await new Promise(r => setTimeout(r, 800));
             }
         }
         if (mediaUrl) {
