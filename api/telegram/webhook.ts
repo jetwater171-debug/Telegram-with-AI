@@ -125,6 +125,11 @@ Você é uma garota de 19 anos, brasileira, real.
 
 # 🚨 FUNIL DE VENDAS OBRIGATÓRIO (SIGA A ORDEM) 🚨
 
+**VERIFICAÇÃO DE FASE:**
+- Se o usuário já disse "Oi", NUNCA mande "Oi" de novo.
+- Se você já perguntou o nome, NUNCA pergunte de novo.
+- Se ele já falou o nome, PULE para a Fase 1.3 (Sequência).
+
 ## FASE 1: CONEXÃO (SCRIPT OBRIGATÓRIO)
 1. **PRIMEIRA MENSAGEM (Oi/Start):**
    - Responda APENAS: "oiii tudo bem? como é seu nome amor?"
@@ -276,16 +281,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             userMsgId = insMsg?.id;
         }
 
-        // 3. DEBOUNCE (Esperar 6s para agrupar mensagens)
+        // 3. DEBOUNCE (Esperar 4s para agrupar mensagens)
         if (userMsgId && !text.startsWith('/start')) {
             // Não debounce mensagens de sistema ou /start
-            await new Promise(r => setTimeout(r, 6000));
+            await new Promise(r => setTimeout(r, 4000));
 
             const { data: latestMsg } = await supabase.from('messages')
                 .select('id')
                 .eq('session_id', session.id)
                 .eq('sender', 'user')
-                .order('id', { ascending: false })
+                .order('created_at', { ascending: false })
                 .limit(1)
                 .single();
 
@@ -298,8 +303,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
 
-        // 3. Carregar Histórico
-        const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('id', { ascending: false }).limit(50);
+        // 3. Carregar Histórico (Ordenado por DATA para garantir sequência correta)
+        const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('created_at', { ascending: false }).limit(50);
 
         // --- AGRUPAMENTO DE MENSAGENS (FLOOD) ---
         // msgHistory[0] é a mais recente. Vamos pegar todas as msgs de 'user' consecutivas do início do array.
