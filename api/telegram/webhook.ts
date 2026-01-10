@@ -179,7 +179,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // 2. Salvar Mensagem do Usuário
         if (!text.startsWith('[SYSTEM:')) {
-            await supabase.from('messages').insert([{ session_id: session.id, sender: 'user', content: text }]);
+            const { error: mErr } = await supabase.from('messages').insert([{ session_id: session.id, sender: 'user', content: text }]);
+            if (mErr) console.error("Error saving user message:", mErr);
         }
 
         // 3. Carregar Histórico e Mídias
@@ -187,24 +188,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const mediaList = (previews || []).map((m: any) => `- ID: ${m.id} | Tipo: ${m.file_type} | Desc: ${m.description || m.file_name}`).join('\n');
 
         const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('created_at', { ascending: false }).limit(20);
-        const history = (msgHistory || []).reverse().map(m => ({
-            role: m.sender === 'user' ? 'user' : 'model',
-            parts: [{ text: m.content.replace(/\[INTERNAL_THOUGHT\].*?\[\/INTERNAL_THOUGHT\]/gs, '').trim() }]
-        }));
+
+        // Mapeamento correto de roles e filtragem de pensamentos internos para o histórico da IA
+        const history = (msgHistory || []).reverse().map(m => {
+            const role = (m.sender === 'bot' || m.sender === 'model') ? 'model' : 'user';
+            const cleanContent = m.content.replace(/\[INTERNAL_THOUGHT\].*?\[\/INTERNAL_THOUGHT\]/gs, '').trim();
+            return {
+                role,
+                parts: [{ text: cleanContent || "..." }]
+            };
+        });
 
         // 4. Gemini Interaction
-        let stats; try { stats = JSON.parse(session.lead_score); } catch (e) { }
+        let stats = {};
+        try {
+            if (session.lead_score) {
+                stats = typeof session.lead_score === 'string' ? JSON.parse(session.lead_score) : session.lead_score;
+            }
+        } catch (e) { console.error("Error parsing lead_score:", e); }
+
         const systemPrompt = getSystemInstruction(session.user_name, stats, mediaList);
 
         const genAI = new GoogleGenAI({ apiKey: geminiKey });
-        const chat = genAI.chats.create({
-            model: "gemini-2.5-flash",
-            config: { systemInstruction: systemPrompt, temperature: 1.3, responseMimeType: "application/json", responseSchema: responseSchema },
-            history: history
+        const model = genAI.getGenerativeModel({
+            model: "gemini-2.0-flash", // Use stable model version
+            generationConfig: {
+                responseMimeType: "application/json",
+                responseSchema: responseSchema,
+                temperature: 1.0,
+            },
+            systemInstruction: systemPrompt
         });
 
-        const result = await chat.sendMessage({ message: text });
-        const aiResponse = JSON.parse(result.text.replace(/```json/g, '').replace(/```/g, '').trim());
+        const chat = model.startChat({ history: history });
+        const result = await chat.sendMessage(text);
+        const aiResponse = JSON.parse(result.response.text());
 
         // 5. Processar Ações (Pagamento, Mídia)
         let mediaUrl, mediaType;
@@ -227,22 +245,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         let paymentSaved = null;
         if (aiResponse.action === 'generate_pix_payment') {
-            const val = aiResponse.payment_details?.value || 30.00;
-            const pixRes = await fetch(`${WIINPAY_BASE_URL}/payment/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key: WIINPAY_API_KEY, value: val, name: "Lead" }) });
-            const pixData = await pixRes.json();
-            const pixCode = pixData?.data?.pixCopiaCola || pixData?.pixCopiaCola;
-            if (pixCode) {
-                aiResponse.messages.push("Copia e cola aqui amor:");
-                aiResponse.messages.push(pixCode);
-                paymentSaved = { paymentId: pixData?.data?.paymentId || pixData?.paymentId, value: val };
-            }
+            try {
+                const val = aiResponse.payment_details?.value || 30.00;
+                const pixRes = await fetch(`${WIINPAY_BASE_URL}/payment/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key: WIINPAY_API_KEY, value: val, name: "Lead" }) });
+                const pixData = await pixRes.json();
+                const pixCode = pixData?.data?.pixCopiaCola || pixData?.pixCopiaCola;
+                if (pixCode) {
+                    aiResponse.messages.push("Copia e cola aqui amor:");
+                    aiResponse.messages.push(pixCode);
+                    paymentSaved = { paymentId: pixData?.data?.paymentId || pixData?.paymentId, value: val };
+                }
+            } catch (pErr) { console.error("Error creating PIX:", pErr); }
         }
 
         // 6. Salvar Resposta da IA e Enviar Telegram
         const thoughtPrefix = aiResponse.internal_thought ? `[INTERNAL_THOUGHT]${aiResponse.internal_thought}[/INTERNAL_THOUGHT]\n` : "";
-        const finalContent = thoughtPrefix + aiResponse.messages.join('\n');
+        const finalContent = thoughtPrefix + (aiResponse.messages?.join('\n') || "");
 
-        await supabase.from('messages').insert([{
+        const { error: bErr } = await supabase.from('messages').insert([{
             session_id: session.id,
             sender: 'bot',
             content: finalContent,
@@ -251,16 +271,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             payment_data: paymentSaved || null
         }]);
 
+        if (bErr) {
+            console.error("Critical error saving bot message:", bErr);
+            // Fallback attempt without payment_data if that was the cause
+            if (bErr.message?.includes('payment_data')) {
+                await supabase.from('messages').insert([{
+                    session_id: session.id,
+                    sender: 'bot',
+                    content: finalContent,
+                    media_url: mediaUrl || null,
+                    media_type: mediaType || null
+                }]);
+            }
+        }
+
         // Atualizar Sessão
         const updateData: any = { last_message_at: new Date() };
         if (aiResponse.extracted_user_name) updateData.user_name = aiResponse.extracted_user_name;
-        if (aiResponse.lead_stats) updateData.lead_score = JSON.stringify(aiResponse.lead_stats);
+        if (aiResponse.lead_stats) updateData.lead_score = aiResponse.lead_stats;
         await supabase.from('sessions').update(updateData).eq('id', session.id);
 
         // Enviar Balões para o Telegram
-        for (const msg of aiResponse.messages) {
-            await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: msg }) });
-            await new Promise(r => setTimeout(r, 600));
+        if (aiResponse.messages) {
+            for (const msg of aiResponse.messages) {
+                await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: msg }) });
+                await new Promise(r => setTimeout(r, 600));
+            }
         }
 
         if (mediaUrl) {
@@ -271,6 +307,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).send('ok');
 
     } catch (e: any) {
+        console.error("Webhook top-level error:", e);
         return res.status(200).send('ok');
     }
 }
