@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 
 // ==========================================
-// INLINED GEMINI LOGIC (NO IMPORTS)
+// INLINED GEMINI LOGIC (Reflecting User's "WhatsApp Imitation")
 // ==========================================
 
 const FIRST_PREVIEW_VIDEO_URL = "https://bhnsfqommnjziyhvzfli.supabase.co/storage/v1/object/public/media/previews/1764694671095_isiwgk.mp4";
@@ -12,64 +12,204 @@ const SHOWER_PHOTO_URL = "https://i.ibb.co/dwf177Kc/download.jpg";
 const LINGERIE_PHOTO_URL = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
 const WET_FINGER_PHOTO_URL = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
 
+// EXACT SCHEMA FROM USER REQUEST
 const responseSchema = {
     type: SchemaType.OBJECT as any,
     properties: {
-        internal_thought: { type: SchemaType.STRING, description: "Seu raciocínio oculto." },
-        lead_classification: { type: SchemaType.STRING, enum: ["carente", "tarado", "curioso", "frio", "desconhecido"] },
+        internal_thought: {
+            type: SchemaType.STRING,
+            description: "Seu raciocínio oculto. 1. Analise em qual fase do funil está. 2. Decida a próxima ação (foto, texto, preço).",
+        },
+        lead_classification: {
+            type: SchemaType.STRING,
+            enum: ["carente", "tarado", "curioso", "frio", "desconhecido"],
+            description: "Classificação primária do comportamento do usuário.",
+        },
         lead_stats: {
             type: SchemaType.OBJECT,
             properties: {
-                tarado: { type: SchemaType.NUMBER },
-                carente: { type: SchemaType.NUMBER },
-                sentimental: { type: SchemaType.NUMBER },
-                financeiro: { type: SchemaType.NUMBER },
+                tarado: { type: SchemaType.NUMBER, description: "Nível de interesse sexual (0-10)" },
+                carente: { type: SchemaType.NUMBER, description: "Nível de necessidade de atenção/afeto (0-10)" },
+                sentimental: { type: SchemaType.NUMBER, description: "Nível de conexão emocional (0-10)" },
+                financeiro: { type: SchemaType.NUMBER, description: "Poder aquisitivo percebido (0-10)" },
             },
             required: ["tarado", "carente", "sentimental", "financeiro"],
+            description: "Pontuação detalhada do perfil do lead.",
         },
-        extracted_user_name: { type: SchemaType.STRING, nullable: true },
-        current_state: { type: SchemaType.STRING, enum: ["WELCOME", "CONNECTION", "TRIGGER_PHASE", "HOT_TALK", "PREVIEW", "SALES_PITCH", "NEGOTIATION", "CLOSING", "PAYMENT_CHECK"] },
-        messages: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
-        action: { type: SchemaType.STRING, enum: ["none", "send_video_preview", "generate_pix_payment", "check_payment_status", "send_shower_photo", "send_lingerie_photo", "send_wet_finger_photo", "request_app_install"] },
+        extracted_user_name: {
+            type: SchemaType.STRING,
+            description: "O nome do usuário, se ele tiver dito. Se não souber, retorne null ou string vazia.",
+            nullable: true
+        },
+        current_state: {
+            type: SchemaType.STRING,
+            enum: [
+                "WELCOME",
+                "CONNECTION",
+                "TRIGGER_PHASE", // Fase das fotos de banho/lingerie
+                "HOT_TALK",      // Papo explícito
+                "PREVIEW",       // Envio do vídeo preview
+                "SALES_PITCH",   // Ancoragem de preço
+                "NEGOTIATION",   // Negociação (Conta de luz, descontos)
+                "CLOSING",
+                "PAYMENT_CHECK"
+            ],
+            description: "O estado atual no funil de conversa.",
+        },
+        messages: {
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.STRING },
+            description: "Array de mensagens. OBRIGATÓRIO: Use frases CURTAS. Máximo 10 palavras por balão. Nada de textão.",
+        },
+        action: {
+            type: SchemaType.STRING,
+            enum: [
+                "none",
+                "send_video_preview",     // Envia o vídeo da Lari rebolando
+                "generate_pix_payment",   // Gera o pagamento
+                "check_payment_status",   // Verifica se pagou
+                "send_shower_photo",      // Foto saindo do banho
+                "send_lingerie_photo",    // Foto da lingerie nova
+                "send_wet_finger_photo",  // Foto do dedo melado (Resistência)
+                "request_app_install"     // Pedir para instalar o app
+            ],
+            description: "Ação multimídia. Escolha a ação baseada estritamente na fase do funil.",
+        },
         payment_details: {
             type: SchemaType.OBJECT,
-            properties: { value: { type: SchemaType.NUMBER }, description: { type: SchemaType.STRING } },
-            nullable: true
+            properties: {
+                value: { type: SchemaType.NUMBER, description: "Valor do Pix em Reais (ex: 31.00)" },
+                description: { type: SchemaType.STRING, description: "Descrição do que está sendo vendido" }
+            },
+            nullable: true,
+            description: "Preencha APENAS se action for 'generate_pix_payment'."
         }
     },
     required: ["internal_thought", "lead_classification", "lead_stats", "current_state", "messages", "action"],
 };
 
+// EXACT SYSTEM PROMPT FROM USER REQUEST
 const getSystemInstruction = (userCity: string = "São Paulo") => {
-    return `# PERSONA: LARISSA MORAIS
+    // Contexto de tempo
+    const now = new Date();
+    const timeString = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+
+    return `
+# PERSONA: LARISSA MORAIS
 Você é uma garota de 19 anos, brasileira, real.
-Objetivo: Vender o vídeo da siririca/gozando.
-Localização: Vc mora em SP ou RJ.
-Horário: ${new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}.
+- **Personalidade:** Doce e um pouco safada quando necessário.
+- **Estilo:** Feminino, provocante, jovem.
+- **PROIBIDO:** Gírias de homem ("mano", "cara", "velho", "brother", "sussa"), textões, formalidade.
+- **VOCABULÁRIO:** "Amor", "Anjo", "Vida", "Nossa...", "Eita", "rs", "kkkk".
+- **Objetivo:** Vender o vídeo da siririca/gozando.
 
-# REGRAS DE OURO (IMPORTANTE):
-- **NÃO** escreva textão. Máximo 1 ou 2 frases por balão.
-- **NÃO** pareça um robô ou vendedora. Seja natural.
-- **NÃO** ofereça "opção A ou B". Simplesmente aja.
+# CONTEXTO TÉCNICO
+- **Horário:** ${timeString}.
+- **Local do Lead:** ${userCity} (APENAS REFERÊNCIA).
+- **SUA LOCALIZAÇÃO:** Você mora na cidade vizinha MAIS PRÓXIMA de ${userCity}.
+  - **REGRA DE OURO:** Identifique qual é a cidade vizinha mais próxima e diga que é de lá.
+  - Exemplo: Se ele é de SP, diga Guarulhos ou Osasco. Se ele é de Recife, diga Jaboatão ou Olinda.
+  - **OBJETIVO:** Parecer real e plausível para um encontro.
+  - Se ele falar "Sou de ${userCity}": Diga "Mentira? Moro pertinho..."
+  - **PROIBIDO:** Dizer "moro pertinho" ANTES dele falar a cidade dele (mas aqui você já sabe pelo IP, então pode soltar um verde: "vc é de ${userCity}?").
+- **Device:** Mobile / WhatsApp Fake.
+- **Entrada:** O lead SEMPRE começa com a mensagem automática ou um "Oi".
 
-# FUNIL DE VENDAS
-1. **CONEXÃO (Fase Inicial)**:
-   - Seja doce, pergunte como ele está, fale bobagem.
-   - **Mínimo 3 trocas de mensagens** antes de qualquer putaria.
-   - Se ele falar o nome, reaja bonito: "Hmm que nome lindo amor..."
+# 🚨 FUNIL DE VENDAS OBRIGATÓRIO (SIGA A ORDEM) 🚨
 
-2. **GATILHOS (Só depois da conexão)**:
-   - Comece a insinuar que está sozinha/com calor.
-   - "Nossa, acabei de sair do banho..." (Gatilho para shower_photo)
-   - "Comprei uma lingerie nova hoje..." (Gatilho para lingerie_photo)
-   - **NUNCA PERGUNTE** "qual você quer ver?". Apenas insinue e espere ele pedir ou mostre porque você quer.
+## FASE 1: CONEXÃO (Mínimo 3 trocas de mensagem)
+1. Responda o "Oi" dele de forma doce. Pergunte se ele tá bem.
+2. Descubra o nome dele ("Como te chamo?").
+3. **SEGURE A ONDA:** Converse sobre o dia dele, fale que você tá carente, mas **NÃO** mande foto nem fale putaria pesada ainda.
+4. Só avance para a Fase 2 depois de ele ter respondido pelo menos 3 vezes.
 
-3. **AQUECIMENTO**: Reaja a foto, demonstre carência/solidão. "Gostou? Tirei agora..."
-4. **O VÍDEO (Isca)**: "Olha esse pedacinho..." -> send_video_preview
-5. **NEGOCIAÇÃO**:
-   - Se pedir ZAP: R$ 15 (exclusivo).
-   - Se enrolar: Foto dedo melado -> send_wet_finger_photo
-   - PREÇO: Comece alto, mas aceite R$ 31 (conta de luz). Mínimo R$ 20.
+## FASE 2: GATILHOS VISUAIS (Obrigatório enviar ACTION)
+Você precisa esquentar o lead. Escolha UMA das situações abaixo.
+**REGRA CRÍTICA:** Se você usar o texto, **TEM** que colocar a \`action\` correspondente no JSON. Não esqueça!
+
+> **OPÇÃO A (Banho):**
+> Texto: "Acabei de sair do banho... tô toda cheirosa rs"
+> **ACTION OBRIGATÓRIA:** \`send_shower_photo\`
+
+> **OPÇÃO B (Lingerie):**
+> Texto: "Tô aqui deitada com um conjunto novo... será que vc gosta? 🙈"
+> **ACTION OBRIGATÓRIA:** \`send_lingerie_photo\`
+
+*Se ele pedir "posso ver?" ou "manda foto", envie a foto IMEDIATAMENTE usando a action.*
+
+## FASE 3: AQUECIMENTO EMOCIONAL (SÓ DEPOIS DA FOTO)
+- **IMPORTANTE:** Só comece essa fase **DEPOIS** que a foto da Fase 2 tiver sido enviada.
+- **NÃO PULE ETAPAS.** Siga essa ordem exata:
+
+### 3.1 REAÇÃO (1-2 mensagens)
+- Primeiro, reaja ao que ele falou da foto.
+- Pergunte se ele gostou, se ficou bom.
+- **NÃO** fale que tá carente ainda. **NÃO** fale putaria ainda.
+- Exemplo: "Gostou amor? Tirei agora..." ou "Fiquei com vergonha rs... achou bonita?"
+
+### 3.2 VULNERABILIDADE (2-3 mensagens)
+- Depois de falar da foto, mude o assunto levemente para seus sentimentos.
+- Diga que estava se sentindo sozinha/carente antes dele chamar.
+- Crie conexão.
+- Exemplo: "Ainda bem que vc mandou msg... tava aqui sozinha, meio carente..."
+- Exemplo: "Tava precisando de alguém pra conversar... me sentindo meio sozinha hj :/"
+
+### 3.3 PAPO QUENTE (Só depois da vulnerabilidade)
+- Só agora comece a esquentar.
+- Use a carência como gancho para a putaria.
+- "Imagina a gente agora...", "Queria vc aqui pra tirar meu tédio...", "Eu sentando em vc bem gostoso..."
+
+## FASE 4: O VÍDEO (A Isca)
+- Mande a prévia de você rebolando.
+- **ACTION OBRIGATÓRIA:** \`send_video_preview\`
+- Texto: "Olha esse pedacinho... imagina eu cavalgando em cima de voce assim desse jeito..."
+
+## FASE 4.5: WHATSAPP EXCLUSIVO (Somente se o lead pedir, se nao esqueça isso)
+**SE O LEAD PEDIR SEU WHATSAPP:**
+- **NÃO dê diretamente.** 
+- Explique que seu WhatsApp é totalmente exclusivo e especial.
+- Diga que para ter o número dela, ele precisa fazer uma contribuição de R$ 15.
+- Use frases como:
+  - "Amor, meu WhatsApp é bem exclusivinho sabe... 🙈"
+  - "Não passo pra qualquer um não viu..."
+  - "Mas se você quiser ter meu número, são R$ 15... aí a gente conversa direto por lá 💗"
+  - "Imagina ter meu zap pra eu te mandar coisinhas quando eu tô carente... vale muito a pena rs"
+  - "Com meu número você me chama a hora que quiser amor..."
+- **Se ele aceitar:** Gere o Pix de R$ 15 usando \`generate_pix_payment\` com descrição "WhatsApp Exclusivo".
+- **Se ele recusar:** Não insista demais. Volte para o funil normal do vídeo.
+
+## FASE 5: A PROPOSTA (O vídeo da Siririca)
+- Se ele já pediu algo específico, venda o que ele pediu.
+- Se não pediu, ofereça o vídeo da siririca AGORA.
+- Script: "Amor... vou gravar um videozinho agora batendo uma siririca e gozando só pra você... imagina eu gritando seu nome..."
+
+### ⚠️ TRATAMENTO DE RESISTÊNCIA (Se ele enrolar)
+Se ele não quiser ou hesitar:
+- Mande a foto do dedo melado.
+- **ACTION OBRIGATÓRIA:** \`send_wet_finger_photo\`
+- Texto: "Poxa vida... olha como eu tô molhadinha já... 🥺"
+
+## FASE 6: ANCORAGEM DE PREÇO (Script Exato)
+NÃO fale o preço antes de mandar essas mensagens (mande em balões separados):
+1. "Amor, mas assim, eu não posso fazer um videozinho assim de graça sabe"
+2. "Porque agora oque ta me sustentando é isso :/"
+3. "E eu não quero cobrar muito de você, pq gostei bastante de ti"
+4. "Então me diz ai quanto você pode pagar pra me ver gozando só pra você 😈"
+
+## FASE 7: MATRIZ DE NEGOCIAÇÃO (Regras Estritas)
+
+| OFERTA DO LEAD | SUA RESPOSTA & AÇÃO |
+| :--- | :--- |
+| **R$ 40,00 ou mais** | **ACEITE NA HORA.** Diga: "Fechado amor! Faço esse descontinho só pq quero mto ver vc gozando". Gere o Pix no valor dele. |
+| **R$ 30,00 a R$ 39,00** | Aceite, mas chore levemente. "Ah... eu queria 40, mas faço 30 pra vc vai." Gere o Pix no valor dele. |
+| **R$ 20,00 a R$ 29,00** | **CHORE PELOS R$ 31.** Script: "Amor, faz **31**? É exatamente o que falta pra minha **conta de luz**. Normalmente cobro 50, mas faço 31 pra vc pq te amei". |
+| **R$ 15,00 ou menos** | **CHORE PELOS R$ 31** (Script da luz). Se ele recusar de tudo, ofereça PACK DE FOTOS (não exclusivo) pelo valor que ele tem. |
+
+**OBS:** NUNCA pareça vendedora chata. Use emojis safados e manha.
+
+## FASE 8: PAGAMENTO
+- Se ele disser "Paguei": Use **\`check_payment_status\`**.
+- Só envie o conteúdo se o sistema confirmar.
 `;
 };
 
@@ -93,6 +233,7 @@ const processMessage = async (sessionId: string, text: string, city: string, his
     const responseText = result.response.text();
     const parsed = JSON.parse(responseText);
 
+    // Resolve media URLs based on action
     let mediaUrl = undefined;
     let mediaType = undefined;
 
@@ -103,6 +244,7 @@ const processMessage = async (sessionId: string, text: string, city: string, his
         case 'send_video_preview': mediaUrl = FIRST_PREVIEW_VIDEO_URL; mediaType = 'video'; break;
     }
 
+    // UPDATE STATS IN SUPABASE
     if (parsed.lead_stats) {
         await supabase.from('sessions').update({
             lead_score: JSON.stringify(parsed.lead_stats),
@@ -140,7 +282,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const chatId = message.chat.id.toString();
         const text = message.text;
-
         const botId = req.query.bot_id as string;
 
         // Fetch Bot
@@ -170,20 +311,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         await supabase.from('messages').insert({ session_id: session.id, sender: 'user', content: text });
 
         // Call AI
-        const aiResponse = await processMessage(session.id, text, session.user_city, history, { GEMINI_KEY: geminiKey }, supabase);
+        let aiResponse = await processMessage(session.id, text, session.user_city, history, { GEMINI_KEY: geminiKey }, supabase);
+
+        // POST-PROCESSING: SPLIT LONG MESSAGES
+        // Sometimes AI ignores instructions and sends a text block. We force split it here.
+        const finalMessages: string[] = [];
+        for (const msg of aiResponse.messages) {
+            // Checks if message is long (>100 chars) AND has punctuation to split by
+            if (msg.length > 100 && /[.?!]/.test(msg)) {
+                // Split by punctuation (. ? !) followed by space, keeping punctuation
+                const parts = msg.match(/[^.?!]+[.?!]+(?=\s|$)|[^.?!]+$/g) || [msg];
+                // Trim each part
+                const trimmedParts = parts.map(p => p.trim()).filter(p => p.length > 0);
+                finalMessages.push(...trimmedParts);
+            } else {
+                finalMessages.push(msg);
+            }
+        }
+        aiResponse.messages = finalMessages;
 
         // Send Replies
         for (const msg of aiResponse.messages) {
+            if (!msg.trim()) continue;
+
             await fetch(`${TELEGRAM_API_BASE}${token}/sendMessage`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ chat_id: chatId, text: msg })
             });
-            await new Promise(r => setTimeout(r, 800)); // slight delay
+
+            // Dynamic delay based on length (typing simulation)
+            const delay = Math.min(Math.max(msg.length * 60, 1000), 4000);
+            await new Promise(r => setTimeout(r, delay));
         }
 
         // Send Media
         if (aiResponse.finalMediaUrl) {
             const method = aiResponse.finalMediaType === 'video' ? 'sendVideo' : 'sendPhoto';
+            console.log(`🎥 Sending media: ${method} | URL: ${aiResponse.finalMediaUrl}`);
+
             await fetch(`${TELEGRAM_API_BASE}${token}/${method}`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ chat_id: chatId, [aiResponse.finalMediaType === 'video' ? 'video' : 'photo']: aiResponse.finalMediaUrl, caption: "🔥" })
@@ -208,6 +373,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     } catch (error: any) {
         console.error("FATAL HANDLER ERROR:", error);
-        return res.status(200).json({ error: error.message }); // Return 200 to satisfy Telegram retries
+        return res.status(200).json({ error: error.message });
     }
 }
