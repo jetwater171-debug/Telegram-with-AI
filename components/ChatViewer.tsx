@@ -6,7 +6,8 @@ import { MessageCircle, User, Clock, RefreshCw } from 'lucide-react';
 interface Session {
     id: string;
     user_name: string;
-    updated_at: string;
+    created_at: string;
+    last_message_at: string;
     lead_score: string;
     messages?: any[];
 }
@@ -28,10 +29,10 @@ export const ChatViewer: React.FC = () => {
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const fetchSessions = async () => {
-        const { data, error } = await supabase
+        const { data } = await supabase
             .from('sessions')
             .select('*')
-            .order('updated_at', { ascending: false });
+            .order('last_message_at', { ascending: false });
 
         if (data) setSessions(data);
     };
@@ -114,14 +115,14 @@ export const ChatViewer: React.FC = () => {
                                     {session.user_name || 'Desconhecido'}
                                 </span>
                                 <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${JSON.stringify(session.lead_score).includes('carente') ? 'bg-pink-100 text-pink-700' :
-                                        JSON.stringify(session.lead_score).includes('tarado') ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
+                                    JSON.stringify(session.lead_score).includes('tarado') ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
                                     }`}>
-                                    {session.lead_score ? JSON.parse(String(session.lead_score))?.lead_classification || 'Novo' : 'Novo'}
+                                    {session.lead_score ? (String(session.lead_score).startsWith('{') ? JSON.parse(String(session.lead_score))?.lead_classification || 'Novo' : session.lead_score) : 'Novo'}
                                 </span>
                             </div>
                             <div className="flex items-center gap-1 text-xs text-gray-500">
                                 <Clock size={12} />
-                                {new Date(session.updated_at).toLocaleString('pt-BR')}
+                                {new Date(session.last_message_at || session.created_at).toLocaleString('pt-BR')}
                             </div>
                         </div>
                     ))}
@@ -148,8 +149,8 @@ export const ChatViewer: React.FC = () => {
                                 return (
                                     <div key={msg.id} className={`flex ${isBot ? 'justify-start' : 'justify-end'}`}>
                                         <div className={`max-w-[70%] rounded-2xl px-4 py-2 shadow-sm text-sm ${isBot
-                                                ? 'bg-white text-gray-800 rounded-tl-none'
-                                                : 'bg-indigo-600 text-white rounded-tr-none'
+                                            ? 'bg-white text-gray-800 rounded-tl-none'
+                                            : 'bg-indigo-600 text-white rounded-tr-none'
                                             }`}>
                                             <p>{msg.content}</p>
                                             <span className={`text-[10px] block mt-1 ${isBot ? 'text-gray-400' : 'text-indigo-200'}`}>

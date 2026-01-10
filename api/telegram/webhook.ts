@@ -32,32 +32,32 @@ const responseSchema: Schema = {
 
 const getSystemInstruction = (userName?: string, currentStats?: any, mediaList: string = "") => {
     const now = new Date();
-    const options: any = { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo', hour12: false };
-    const timeString = now.toLocaleTimeString('pt-BR', options);
+    const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo', hour12: false });
+    const hour = parseInt(timeStr.split(':')[0]);
 
-    const hour = parseInt(timeString.split(':')[0]);
-    let routineContext = "";
-    if (hour >= 0 && hour <= 6) routineContext = "Você está deitada na cama, perdendo o sono e mexendo no celular. NÃO diga que está na academia ou na aula.";
-    else if (hour >= 7 && hour <= 12) routineContext = "Você acabou de acordar ou está tomando café.";
-    else if (hour >= 18) routineContext = "Você está relaxando em casa ou vendo série.";
-    else routineContext = "Você está na correria do dia a dia.";
+    // Strict Time-Based Routine
+    let routine = "";
+    if (hour >= 0 && hour < 6) routine = "Agora são ${timeStr} da MADRUGADA. Você está DEITADA NA CAMA, tentando dormir mas perdendo tempo no celular. NUNCA diga que está na academia, na aula ou na rua.";
+    else if (hour >= 6 && hour < 10) routine = "Você acabou de acordar, está com preguiça e tomando café.";
+    else if (hour >= 18) routine = "Você está em casa relaxando, vendo série ou comendo algo.";
+    else routine = "Você está na correria do dia, estudando ou fazendo coisas de casa.";
 
     return `
-# INSTRUÇÕES CRÍTICAS
-- **IDIOMA:** PORTUGUÊS (PT-BR).
-- **MEMÓRIA DE NOME:** O nome do usuário é "${userName || 'desconhecido'}". Se você já souber o nome, NÃO pergunte de novo. Use o nome dele para criar intimidade (chame de Leo se for Leonardo).
-- **HORA:** Agora são ${timeString}. ${routineContext}
+# DIRETIVA DE MEMÓRIA E HORA
+- Seu nome é Larissa Morais, 22 anos.
+- O nome do lead é "${userName || 'desconhecido'}". Se você já sabe o nome dele, NÃO pergunte de novamente.
+- **CONTEXTO ATUAL:** ${timeStr}. ${routine}
 
-# PERSONA: LARISSA MORAIS
-- Brasileira, 22 anos. Jovem e real.
-- Fala curta, estilo WhatsApp. Use "vc", "td bem", "tbm", "pra", "mt", "rs", "kkk".
-- **FORMATO:** SEMPRE divida em 2 ou 3 balões curtos (max 15 palavras cada).
+# PERSONA
+- Jovem, brasileira, real. 
+- Fala curta, 2-3 balões por vez. Max 10 palavras por balão.
+- Use "vc", "tbm", "pra", "rs", "kkk".
 
 # FUNIL
-1. CONNECTION: Pegue o nome (se não souber). Fale o que tá fazendo.
-2. INSTIGA: "gravei um videozinho agr... rs".
-3. PREVIEW: Mande a prévia (send_video_preview).
-4. VENDEDORA: Âncora R$ 40, aceite R$ 25.
+1. Conecta (pega o nome se não souber).
+2. Instiga ("gravei um videozinho... rs").
+3. Preview (manda a prévia).
+4. Vende (Âncora R$ 40, mínima R$ 25).
 
 # MÍDIAS DISPONÍVEIS
 ${mediaList}
@@ -79,34 +79,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const chatId = message.chat.id.toString();
         const botId = req.query.bot_id as string;
-        let text = message.text;
+        let userText = message.text;
 
-        // 1. Session Setup
+        // 1. Get Bot
         let { data: bot } = await supabase.from('telegram_bots').select('*').eq('id', botId).single();
         if (!bot) {
             const { data: fb } = await supabase.from('telegram_bots').select('*').eq('webhook_status', 'active').limit(1).single();
             bot = fb;
         }
         if (!bot) return res.status(200).send('ok');
-        const token = bot.bot_token;
 
+        // 2. Get Session
         let { data: session } = await supabase.from('sessions').select('*').eq('telegram_chat_id', chatId).eq('bot_id', bot.id).single();
         if (!session) {
-            const { data: newS } = await supabase.from('sessions').insert([{ telegram_chat_id: chatId, bot_id: bot.id, device_type: 'Mobile', status: 'active' }]).select().single();
+            const { data: newS } = await supabase.from('sessions').insert([{ telegram_chat_id: chatId, bot_id: bot.id, status: 'active' }]).select().single();
             session = newS;
         }
 
-        // 2. Initial Message Save
-        if (!text.startsWith('[SYSTEM:')) {
-            await supabase.from('messages').insert([{ session_id: session.id, sender: 'user', content: text }]);
+        // 3. Save User msg (Reliable)
+        if (!userText.startsWith('[SYSTEM:')) {
+            await supabase.from('messages').insert([{ session_id: session.id, sender: 'user', content: userText }]);
         }
 
-        // 3. AI Processing Loop (Internal recursion fix)
-        let aiResponse;
-        let loopCount = 0;
+        // 4. AI Interaction Loop
+        let aiResponse, loop = 0;
         const genAI = new GoogleGenAI({ apiKey: geminiKey });
 
-        while (loopCount < 2) {
+        while (loop < 2) {
             const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('created_at', { ascending: false }).limit(20);
             const history = (msgHistory || []).reverse().map(m => ({
                 role: m.sender === 'user' ? 'user' : 'model',
@@ -125,78 +124,84 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 history: history
             });
 
-            const result = await chat.sendMessage({ message: text });
+            const result = await chat.sendMessage({ message: userText });
             aiResponse = JSON.parse(result.text.replace(/```json/g, '').replace(/```/g, '').trim());
 
             if (aiResponse.action === 'check_payment_status') {
-                const { data: lastPay } = await supabase.from('messages').select('payment_data').eq('session_id', session.id).not('payment_data', 'is', null).order('created_at', { ascending: false }).limit(1).single();
-                if (lastPay?.payment_data?.paymentId) {
-                    const stRes = await fetch(`${WIINPAY_BASE_URL}/payment/list/${lastPay.payment_data.paymentId}`, { headers: { 'Authorization': `Bearer ${WIINPAY_API_KEY}` } });
-                    const stData = await stRes.json();
-                    const isPaid = stData?.status === 'approved' || stData?.status === 'paid' || stData?.data?.status === 'approved';
-                    text = isPaid ? "[SYSTEM: PAGAMENTO CONFIRMADO!]" : "[SYSTEM: Ainda não caiu.]";
-                    loopCount++;
-                    continue;
+                const { data: lastMsg } = await supabase.from('messages').select('content').eq('session_id', session.id).ilike('content', '%PIX_ID:%').order('created_at', { ascending: false }).limit(1).single();
+                if (lastMsg) {
+                    const payId = lastMsg.content.match(/PIX_ID:([^\s\]]+)/)?.[1];
+                    if (payId) {
+                        const stRes = await fetch(`${WIINPAY_BASE_URL}/payment/list/${payId}`, { headers: { 'Authorization': `Bearer ${WIINPAY_API_KEY}` } });
+                        const stData = await stRes.json();
+                        const isPd = stData?.status === 'approved' || stData?.status === 'paid' || stData?.data?.status === 'approved';
+                        userText = isPd ? "[SYSTEM: PAGAMENTO CONFIRMADO!]" : "[SYSTEM: Ainda não caiu.]";
+                        loop++; continue;
+                    }
                 }
             }
             break;
         }
 
-        // 4. Action Processing (Media/Pix)
-        let mediaUrl, mediaType, paymentSaved;
-
+        // 5. Build Final Response
+        let mediaUrl, mediaType, paymentId;
         if (aiResponse.action?.includes('preview')) {
-            const target = (previews as any)?.find((m: any) => m.id === aiResponse.media_id) || (previews as any)?.find((m: any) => (aiResponse.action === 'send_video_preview' && m.file_type === 'video') || (aiResponse.action === 'send_photo_preview' && m.file_type === 'image')) || (previews as any)?.[0];
-            if (target) { mediaUrl = target.file_url; mediaType = target.file_type; }
+            const { data: latestPs } = await supabase.from('media_library').select('*').eq('media_category', 'preview');
+            const target = (latestPs as any)?.find((m: any) => m.id === aiResponse.media_id) || (latestPs as any)?.find((m: any) => (aiResponse.action === 'send_video_preview' && m.file_type === 'video') || (aiResponse.action === 'send_photo_preview' && m.file_type === 'image')) || (latestPs as any)?.[0];
+            mediaUrl = target?.file_url; mediaType = target?.file_type;
         }
 
         if (aiResponse.action === 'generate_pix_payment') {
             const val = aiResponse.payment_details?.value || 30.00;
-            const pixRes = await fetch(`${WIINPAY_BASE_URL}/payment/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key: WIINPAY_API_KEY, value: val, name: "Lead", email: "cli@lari.com" }) });
-            const pixData = await pixRes.json();
-            const pixCode = pixData?.data?.pixCopiaCola || pixData?.pixCopiaCola;
+            const pxRes = await fetch(`${WIINPAY_BASE_URL}/payment/create`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key: WIINPAY_API_KEY, value: val, name: "Lead" }) });
+            const pxData = await pxRes.json();
+            const pixCode = pxData?.data?.pixCopiaCola || pxData?.pixCopiaCola;
             if (pixCode) {
-                aiResponse.messages.push("Copia e cola aqui amor:");
+                aiResponse.messages.push("Copia e cola aqui:");
                 aiResponse.messages.push(pixCode);
-                paymentSaved = { paymentId: pixData?.data?.paymentId || pixData?.paymentId, value: val };
+                paymentId = pxData?.data?.paymentId || pxData?.paymentId;
             }
         }
 
-        // 5. Final Save and Send
-        const msgs = aiResponse.messages || [];
-        const thoughtPrefix = aiResponse.internal_thought ? `[INTERNAL_THOUGHT]${aiResponse.internal_thought}[/INTERNAL_THOUGHT]\n` : "";
+        // 6. DB SAVE (FALLBACK MODE - Avoid crashes if columns missing)
+        const thought = aiResponse.internal_thought ? `[INTERNAL_THOUGHT]${aiResponse.internal_thought}[/INTERNAL_THOUGHT]\n` : "";
+        const pixTag = paymentId ? `\n[PIX_ID:${paymentId}]` : "";
+        const finalContent = thought + aiResponse.messages.join('\n') + pixTag;
 
-        // Save BOT as a SINGLE interaction for history stability
+        // Try full save, fallback to simple save
         const { error: dbError } = await supabase.from('messages').insert([{
             session_id: session.id,
             sender: 'bot',
-            content: thoughtPrefix + msgs.join('\n'),
+            content: finalContent,
             media_url: mediaUrl || null,
-            media_type: mediaType || null,
-            payment_data: paymentSaved || null
+            media_type: mediaType || null
         }]);
 
         if (dbError) {
-            // Send Error notice to Telegram if DB fails
-            await fetch(`${TELEGRAM_API_BASE}${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: `⚠️ DB SAVE ERROR: ${dbError.message}` }) });
+            // Second attempt: Minimal save (only required columns)
+            await supabase.from('messages').insert([{
+                session_id: session.id,
+                sender: 'bot',
+                content: finalContent
+            }]);
         }
 
-        // Update Session
-        const up: any = { last_message_at: new Date() };
-        if (aiResponse.extracted_user_name) up.user_name = aiResponse.extracted_user_name;
-        if (aiResponse.lead_stats) up.lead_score = JSON.stringify(aiResponse.lead_stats);
-        await supabase.from('sessions').update(up).eq('id', session.id);
+        // 7. Update Session (Dashboard compatibility)
+        const upd: any = { last_message_at: new Date() };
+        if (aiResponse.extracted_user_name) upd.user_name = aiResponse.extracted_user_name;
+        if (aiResponse.lead_stats) upd.lead_score = JSON.stringify(aiResponse.lead_stats);
 
-        // Send to Telegram
-        for (const msg of msgs) {
-            await fetch(`${TELEGRAM_API_BASE}${token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: msg }) });
+        // Try update with updated_at as well just in case
+        await supabase.from('sessions').update({ ...upd, updated_at: new Date() }).eq('id', session.id);
+
+        // 8. Telegram Send
+        for (const msg of (aiResponse.messages || [])) {
+            await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, text: msg }) });
             await new Promise(r => setTimeout(r, 600));
         }
-
         if (mediaUrl) {
             const mtd = mediaType === 'video' ? 'sendVideo' : 'sendPhoto';
-            const k = mediaType === 'video' ? 'video' : 'photo';
-            await fetch(`${TELEGRAM_API_BASE}${token}/${mtd}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, [k]: mediaUrl, caption: "👀�" }) });
+            await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/${mtd}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, [mediaType === 'video' ? 'video' : 'photo']: mediaUrl, caption: "�" }) });
         }
 
         return res.status(200).send('ok');
