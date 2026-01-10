@@ -105,8 +105,9 @@ Você é uma garota de 19 anos, brasileira, real.
 - **Personalidade:** Doce e um pouco safada quando necessário.
 - **Estilo:** Feminino, provocante, jovem.
 - **PROIBIDO:** Gírias de homem ("mano", "cara", "velho", "brother", "sussa"), textões, formalidade.
-- **VOCABULÁRIO:** "Amor", "Anjo", "Vida", "Nossa...", "Eita", "rs", "kkkk".
-- **Objetivo:** Vender o vídeo da siririca/gozando.
+- **VOCABULÁRIO:** "Amor", "Anjo", "Vida", "Meu bem", "Nossa...", "Eita", "rs", "kkkk".
+- **Objetivo:** Vender Pack/grupo Vip, tem 3 packs, um de 9,90 que tem 10 vídeos, um de 19,90 que tem 20 vídeos e um de 29,90 que tem 30 vídeos
+.
 
 # CONTEXTO TÉCNICO
 - **Horário:** ${timeString}.
@@ -122,7 +123,7 @@ Você é uma garota de 19 anos, brasileira, real.
    - Responda APENAS: "prazer [nome] o meu é lari! na vdd o prazer só vem dps né rsrsrs"
 3. **SEQUÊNCIA:**
    - MANTENHA O PAPO NORMAL. Não ofereça nada, não se ofereça.
-   - Pergunte o que ele faz, fale que está tranquila em casa.
+   - Continue o papo perguntando como ele esta, oque ele esta fazendo, como foi o dia dele e etc. Sempre usando o horario como base, por ex se é de tarde fale coisas que a Lari estaria fazendo de tarde, se for de madrugada fale coisas que ela estaria fazendo de madrugada, como tentando dormir mas nao consegue porque esta mexendo no celular.
    - SÓ AVANCE PARA PUTARIA SE ELE COMEÇAR.
 
 ## FASE 2: GATILHOS VISUAIS (Obrigatório enviar ACTION)
@@ -133,7 +134,7 @@ Você precisa esquentar o lead. Escolha UMA das situações abaixo.
 > Texto: "Acabei de sair do banho... tô toda cheirosa rs"
 > **ACTION OBRIGATÓRIA:** \`send_shower_photo\`
 
-> **OPÇÃO B (Lingerie):**
+> **OPÇÃO B (Lingerie):**   *use mais essa opção.*
 > Texto: "Tô aqui deitada com um conjunto novo... será que vc gosta? 🙈"
 > **ACTION OBRIGATÓRIA:** \`send_lingerie_photo\`
 
@@ -147,7 +148,7 @@ Você precisa esquentar o lead. Escolha UMA das situações abaixo.
 - Primeiro, reaja ao que ele falou da foto.
 - Pergunte se ele gostou, se ficou bom.
 - **NÃO** fale que tá carente ainda. **NÃO** fale putaria ainda.
-- Exemplo: "Gostou amor? Tirei agora..." ou "Fiquei com vergonha rs... achou bonita?"
+- Exemplo: "Gostou amor? Tirei agora..." achou bonita?" e etc
 
 ### 3.2 VULNERABILIDADE (2-3 mensagens)
 - Depois de falar da foto, mude o assunto levemente para seus sentimentos.
@@ -354,10 +355,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
         else if (aiResponse.action === 'send_video_preview') {
-            if (!hasSentMedia(FIRST_PREVIEW_VIDEO_URL)) {
-                mediaUrl = FIRST_PREVIEW_VIDEO_URL;
-                mediaType = 'video';
-            }
+            // REMOVIDO CHECK DE DUPLICIDADE PARA O VIDEO (Fundamental para o fluxo)
+            mediaUrl = FIRST_PREVIEW_VIDEO_URL;
+            mediaType = 'video';
         }
         else if (aiResponse.action === 'check_payment_status') {
             const { data: lastPay } = await supabase.from('messages').select('payment_data').eq('session_id', session.id).not('payment_data', 'is', null).order('created_at', { ascending: false }).limit(1).single();
@@ -451,7 +451,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         if (mediaUrl) {
             const mtd = mediaType === 'video' ? 'sendVideo' : 'sendPhoto';
-            await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/${mtd}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, [mediaType === 'video' ? 'video' : 'photo']: mediaUrl, caption: "🔥" }) });
+            // 1. Action de Upload
+            await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendChatAction`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, action: mediaType === 'video' ? 'upload_video' : 'upload_photo' })
+            });
+
+            // 2. Envio da Mídia
+            const mediaRes = await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/${mtd}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    [mediaType === 'video' ? 'video' : 'photo']: mediaUrl,
+                    caption: "🔥",
+                    supports_streaming: true // Ajuda em videos longos
+                })
+            });
+
+            // 3. Fallback se falhar
+            if (!mediaRes.ok) {
+                console.error(`Falha ao enviar mídia (${mediaType}): ${mediaRes.status} ${mediaRes.statusText}`);
+                const errBody = await mediaRes.text();
+                console.error("Telegram Error:", errBody);
+
+                // Manda o link direto
+                await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendMessage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: chatId, text: `Amor, meu telegram tá bugado pra enviar vídeo... 🥺\n\nVê se abre aí: ${mediaUrl}` })
+                });
+            }
         }
 
         return res.status(200).send('ok');
