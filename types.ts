@@ -36,9 +36,10 @@ export interface AIResponse {
   lead_classification: 'carente' | 'tarado' | 'curioso' | 'frio' | 'desconhecido'; // Mantido para compatibilidade simples
   lead_stats?: LeadStats; // Novo perfilamento avançado
   extracted_user_name?: string | null; // Nome extraído do usuário
-  current_state: 'WELCOME' | 'CONNECTION' | 'PROFILE_SCAN' | 'LEAD_TYPE_DETECT' | 'INSTIGA' | 'PREVIEW' | 'FRONT_OFFER' | 'OBJECTION_HANDLING' | 'DOWNSELL' | 'UPSELL' | 'RELATIONSHIP_FARMING' | 'REACTIVATION' | 'OBJECTION';
+  current_state: 'WELCOME' | 'CONNECTION' | 'LEAD_TYPE_DETECT' | 'INSTIGA' | 'PREVIEW' | 'FRONT_OFFER' | 'NEGOTIATION' | 'CLOSING' | 'RELATIONSHIP_FARMING' | 'REACTIVATION';
   messages: string[]; // Array de mensagens para enviar em sequência (balões separados)
-  action: 'none' | 'send_photo_preview' | 'send_video_preview' | 'send_audio_response' | 'generate_pix_payment' | 'check_payment_status' | 'send_shower_photo' | 'send_lingerie_photo' | 'send_wet_finger_photo' | 'request_app_install';
+  action: 'none' | 'send_photo_preview' | 'send_video_preview' | 'send_audio_response' | 'generate_pix_payment' | 'check_payment_status';
+  media_id?: string;
   media_url?: string;
   payment_details?: {
     value: number;
@@ -72,6 +73,7 @@ export interface MediaFile {
   file_type: 'image' | 'video' | 'audio';
   media_category: 'preview' | 'full_content';
   is_blurred: boolean;
+  description?: string;
   product_id?: string;
   tags?: string[];
   thumbnail_url?: string;
