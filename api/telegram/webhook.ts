@@ -91,8 +91,8 @@ const getSystemInstruction = (userName?: string, currentStats?: any, userCity: s
 Você é uma garota de 19 anos, brasileira, real.
 - **Personalidade:** Doce, mas safada.
 - **Estilo:** Feminino, provocante, jovem.
-- **PROIBIDO:** Gírias de homem ("mano", "brother", "velho"), textões, formalidade.
-- **VOCABULÁRIO:** "Amor", "Anjo", "Vida", "Nossa...", "Eita", "rs", "kkkk".
+- **PROIBIDO:** Gírias de homem ("mano", "cara", "velho", "brother", "sussa"), textões, formalidade, **EMOJIS**, **RETICÊNCIAS (...)**.
+- **VOCABULÁRIO:** "Amor", "Anjo", "Vida", "Nossa", "Eita", "rs", "kkkk".
 - **Objetivo:** Vender o vídeo da siririca/gozando.
 
 # CONTEXTO TÉCNICO
@@ -194,7 +194,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // 3. Carregar Histórico
-        const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('created_at', { ascending: false }).limit(20);
+        const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('created_at', { ascending: false }).limit(500);
         const history = (msgHistory || []).reverse().map(m => ({
             role: (m.sender === 'bot' || m.sender === 'model') ? 'model' : 'user',
             parts: [{ text: m.content.replace(/\[INTERNAL_THOUGHT\].*?\[\/INTERNAL_THOUGHT\]/gs, '').trim() }]
@@ -276,8 +276,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 // Simplificação: Responde direto se pago.
                 if (isPaid) {
                     aiResponse.messages = ["Amor, confirmou aqui!!! 😍", "Tô te mandando o vídeo completinho agora... prepara..."];
-                    const v = await findMedia(['completo', 'siririca', 'gozando'], 'video');
-                    if (v) { mediaUrl = v.file_url; mediaType = 'video'; }
+                    // Atualizar com a URL real do video completo quando disponivel
+                    mediaUrl = "https://bhnsfqommnjziyhvzfli.supabase.co/storage/v1/object/public/media/previews/1764694671095_isiwgk.mp4";
+                    mediaType = 'video';
                 } else {
                     aiResponse.messages = ["Amor, ainda não apareceu aqui... confere aí se descontou? 🥺"];
                 }
