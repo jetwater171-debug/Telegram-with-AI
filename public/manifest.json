@@ -1,0 +1,20 @@
+{
+    "name": "Larissa Morais Chat",
+    "short_name": "Lari Chat",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#efe7dd",
+    "theme_color": "#efe7dd",
+    "icons": [
+        {
+            "src": "/lari-profile.jpg",
+            "sizes": "192x192",
+            "type": "image/jpeg"
+        },
+        {
+            "src": "/lari-profile.jpg",
+            "sizes": "512x512",
+            "type": "image/jpeg"
+        }
+    ]
+}

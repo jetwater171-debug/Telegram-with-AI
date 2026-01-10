@@ -1,0 +1,7 @@
+{
+  "name": "Larissa Morais Chat",
+  "description": "Um chat interativo simulando o WhatsApp com a persona Larissa Morais.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
