@@ -332,7 +332,7 @@ export const resumeChatSession = async (sessionId: string): Promise<{ success: b
   })) || [];
 
   chatSession = genAI.chats.create({
-    model: 'gemini-2.0-flash',
+    model: 'gemini-2.5-flash',
     config: {
       systemInstruction: dynamicSystemInstruction,
       temperature: 1.2, // Levemente reduzido para manter coerência mas ainda criativo
@@ -361,7 +361,7 @@ export const initializeChat = async (userCity: string = "São Paulo", isHighTick
     const dynamicSystemInstruction = getSystemInstruction(userCity, isHighTicketDevice, undefined);
 
     chatSession = genAI.chats.create({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       config: {
         systemInstruction: dynamicSystemInstruction,
         temperature: 1.2,

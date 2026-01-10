@@ -333,7 +333,7 @@ export const resumeChatSession = async (sessionId: string): Promise<{ success: b
     })) || [];
 
     const model = genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-2.5-flash',
         systemInstruction: dynamicSystemInstruction,
         generationConfig: {
             temperature: 1.2,
