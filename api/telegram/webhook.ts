@@ -270,7 +270,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     status: 'pending'
                 };
             } else {
-                const debugError = pixData?.error ? ` (${pixData.error})` : "";
+                let debugError = "";
+                try {
+                    debugError = ` (${JSON.stringify(pixData)})`;
+                } catch (e) {
+                    debugError = " (Error parsing response)";
+                }
                 aiResponse.messages.push(`Amor o sistema do banco tá fora do ar agora... tenta daqui a pouco? :(${debugError})`);
             }
         } else if (aiResponse.action === 'check_payment_status') {
