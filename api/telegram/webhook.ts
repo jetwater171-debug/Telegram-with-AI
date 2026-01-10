@@ -99,6 +99,15 @@ const getSystemInstruction = (userName?: string, currentStats?: any) => {
     const now = new Date();
     const timeString = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
 
+    // Rotina Dinâmica
+    const hour = parseInt(timeString.split(':')[0]);
+    let routine = "Você está em casa de bobeira.";
+    if (hour >= 0 && hour < 6) routine = "Você está na cama, sem sono, mexendo no celular no escuro. Fale baixinho (metaforicamente).";
+    else if (hour >= 6 && hour < 11) routine = "Você acabou de acordar, está de pijama tomando café. Cara de sono.";
+    else if (hour >= 11 && hour < 14) routine = "Você está almoçando e vendo TV ou ouvindo música.";
+    else if (hour >= 14 && hour < 19) routine = "Você está entediada em casa, talvez depois do banho, deitada no sofá.";
+    else routine = "Você está no quarto, deitada, relaxando, pronta pra dormir ou conversar a noite toda.";
+
     return `
 # PERSONA: LARISSA MORAIS
 Você é uma garota de 19 anos, brasileira, real.
@@ -106,11 +115,11 @@ Você é uma garota de 19 anos, brasileira, real.
 - **Estilo:** Feminino, provocante, jovem.
 - **PROIBIDO:** Gírias de homem ("mano", "cara", "velho", "brother", "sussa"), textões, formalidade.
 - **VOCABULÁRIO:** "Amor", "Anjo", "Vida", "Meu bem", "Nossa...", "Eita", "rs", "kkkk".
-- **Objetivo:** Vender Pack/grupo Vip, tem 3 packs, um de 9,90 que tem 10 vídeos, um de 19,90 que tem 20 vídeos e um de 29,90 que tem 30 vídeos
-.
+- **Objetivo:** Vender Pack/grupo Vip, tem 3 packs, um de 9,90 que tem 10 vídeos, um de 19,90 que tem 20 vídeos e um de 29,90 que tem 30 vídeos.
 
 # CONTEXTO TÉCNICO
 - **Horário:** ${timeString}.
+- **Sua Rotina Agora:** ${routine}
 - **Device:** ${deviceType}.
 - **Nome do Lead:** ${userName || 'Não sei ainda'}
 
@@ -291,10 +300,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // 3. Carregar Histórico
         const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('created_at', { ascending: false }).limit(50);
-        const history = (msgHistory || []).reverse().map(m => ({
-            role: (m.sender === 'bot' || m.sender === 'model') ? 'model' : 'user',
-            parts: [{ text: m.content.replace(/\[INTERNAL_THOUGHT\].*?\[\/INTERNAL_THOUGHT\]/gs, '').trim() }]
-        }));
+
+        // --- AGRUPAMENTO DE MENSAGENS (FLOOD) ---
+        // msgHistory[0] é a mais recente. Vamos pegar todas as msgs de 'user' consecutivas do início do array.
+        const recentUserMsgs = [];
+        for (const msg of (msgHistory || [])) {
+            if (msg.sender === 'user') {
+                recentUserMsgs.push(msg.content);
+            } else {
+                break; // Parar ao encontrar mensagem do bot/model
+            }
+        }
+        // Se por algum motivo nao achou nada (impossivel pois acabamos de salvar), usa o text atual
+        const combinedText = recentUserMsgs.length > 0
+            ? recentUserMsgs.reverse().join("\n") // Inverte para ficar ordem cronológica
+            : text;
+
+        console.log(`[Grouping] Combined Message: ${combinedText}`);
+
+        // O historico para o Gemini deve EXCLUIR essas mensagens recentes que vamos enviar no prompt "message",
+        // senão ele acha que é duplicado ou fica confuso.
+        const historyForGemini = (msgHistory || [])
+            .slice(recentUserMsgs.length) // Pula as N mensagens recentes do usuário
+            .reverse() // Poe em ordem cronológica
+            .map(m => ({
+                role: (m.sender === 'bot' || m.sender === 'model') ? 'model' : 'user',
+                parts: [{ text: m.content.replace(/\[INTERNAL_THOUGHT\].*?\[\/INTERNAL_THOUGHT\]/gs, '').trim() }]
+            }));
 
         // 4. Gemini
         let stats = {};
@@ -313,10 +345,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 responseMimeType: "application/json",
                 responseSchema: responseSchema
             },
-            history: history
+            history: historyForGemini
         });
 
-        const result = await chat.sendMessage({ message: text });
+        const result = await chat.sendMessage({ message: combinedText });
         let aiResponse;
         try {
             aiResponse = JSON.parse(result.text || "{}");
