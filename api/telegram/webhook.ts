@@ -360,23 +360,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // Aguarda para agrupar floods (8s para garantir que a segunda msg salve e seja vista)
             await new Promise(r => setTimeout(r, 8000));
 
-            // MASTER-FOLLOWER CHECK (MAX ID STRATEGY)
-            // Descobre quem é o "Mestre" (a mensagem mais recente de todas).
-            // A query busca explicitamente a mensagem com MAIOR ID nesta sessão.
+            // MASTER-FOLLOWER CHECK (MAX TIMESTAMP STRATEGY)
+            // Problema com ID: Pode ser string/number e causar erro de comparação.
+            // Solução: Usar 'created_at'. A última mensagem inserida é a Mestre.
             const { data: maxMsg } = await supabase.from('messages')
-                .select('telegram_message_id')
+                .select('id, created_at')
                 .eq('session_id', session.id)
                 .eq('sender', 'user')
-                .order('telegram_message_id', { ascending: false })
+                .order('created_at', { ascending: false })
                 .limit(1)
                 .single();
 
-            console.log(`[Debounce] Master Check -> MyID: ${message.message_id} | MaxID: ${maxMsg?.telegram_message_id}`);
+            console.log(`[Debounce] Master Check -> MyID: ${userMsgId} | MaxID: ${maxMsg?.id}`);
 
-            // FIX: Type Safety (String Comparison)
-            // Validamos como Strings para evitar erro de number vs string
-            if (maxMsg && String(maxMsg.telegram_message_id) !== String(message.message_id)) {
-                console.log(`[Debounce] Abortando thread ${message.message_id} pois o Mestre é ${maxMsg.telegram_message_id}`);
+            // Se o ID da mensagem mais recente no banco não for o MEU ID (userMsgId), então eu não sou o mestre.
+            // (userMsgId é o ID do banco retornando no insert lá em cima)
+            if (maxMsg && maxMsg.id !== userMsgId) {
+                console.log(`[Debounce] Abortando thread ${userMsgId} pois o Mestre é ${maxMsg.id}`);
                 return res.status(200).send('ok');
             }
 
