@@ -350,14 +350,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // 3. DEBOUNCE (Esperar 3s para agrupar mensagens)
         if (userMsgId && !text.startsWith('/start')) {
-            // Feedback VISUAL imediato: "Digitando..."
-            await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendChatAction`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: chatId, action: 'typing' })
-            });
-
             // Aguarda para agrupar floods (8s para garantir que a segunda msg salve e seja vista)
+            // REMOVED EARLY TYPING: User wants to wait before "activating".
             await new Promise(r => setTimeout(r, 8000));
 
             // MASTER-FOLLOWER CHECK (MAX TIMESTAMP STRATEGY)
@@ -379,6 +373,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 console.log(`[Debounce] Abortando thread ${userMsgId} pois o Mestre é ${maxMsg.id}`);
                 return res.status(200).send('ok');
             }
+
+            // WE ARE THE MASTER. Now we show typing.
+            await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendChatAction`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, action: 'typing' })
+            });
 
         }
 
