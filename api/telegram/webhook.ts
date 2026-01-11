@@ -301,8 +301,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 body: JSON.stringify({ chat_id: chatId, action: 'typing' })
             });
 
-            // Aguarda para agrupar floods
-            await new Promise(r => setTimeout(r, 6000));
+            // Aguarda para agrupar floods (12s para garantir)
+            await new Promise(r => setTimeout(r, 12000));
 
             const { data: latestMsg } = await supabase.from('messages')
                 .select('id, telegram_message_id')
