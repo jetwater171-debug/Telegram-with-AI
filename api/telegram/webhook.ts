@@ -373,8 +373,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             console.log(`[Debounce] Master Check -> MyID: ${message.message_id} | MaxID: ${maxMsg?.telegram_message_id}`);
 
-            // Se eu não for o mestre (o mais recente), eu morro.
-            if (maxMsg && maxMsg.telegram_message_id !== message.message_id) {
+            // FIX: Type Safety (String Comparison)
+            // Validamos como Strings para evitar erro de number vs string
+            if (maxMsg && String(maxMsg.telegram_message_id) !== String(message.message_id)) {
                 console.log(`[Debounce] Abortando thread ${message.message_id} pois o Mestre é ${maxMsg.telegram_message_id}`);
                 return res.status(200).send('ok');
             }
