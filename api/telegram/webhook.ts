@@ -274,26 +274,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         if (!bot) return res.status(200).send('ok');
 
-        // FIX: Use limit(1).maybeSingle() to avoid erroring if duplicates exist. 
-        // We pick the oldest session to maintain stability.
-        // FIX: Convergent Session Retrieval
-        // 1. Try to Fetch
-        let { data: session } = await supabase.from('sessions')
-            .select('*')
-            .eq('telegram_chat_id', chatId)
-            .eq('bot_id', bot.id)
-            .order('created_at', { ascending: true })
-            .limit(1)
-            .maybeSingle();
-
-        // 2. If not found, Try to Insert (Race Condition susceptible)
-        if (!session) {
-            await supabase.from('sessions').insert([{ telegram_chat_id: chatId, bot_id: bot.id, status: 'active' }]);
-
-            // 3. FORCE RE-FETCH (Convergence Step)
-            // Regardless of who won the race to insert, we BOTH fetch again.
-            // Since we order by created_at ASC and limit 1, we will BOTH settle on the exact same session ID.
-            const { data: retrySession } = await supabase.from('sessions')
+        // FIX: Resilient Session Retrieval Loop (No Data Loss)
+        // Tenta buscar a sessão. Se não achar, cria. Se der erro ao criar (duplicada), busca de novo.
+        let session = null;
+        for (let i = 0; i < 3; i++) {
+            // Tentativa 1: Buscar
+            const { data: existing } = await supabase.from('sessions')
                 .select('*')
                 .eq('telegram_chat_id', chatId)
                 .eq('bot_id', bot.id)
@@ -301,12 +287,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 .limit(1)
                 .maybeSingle();
 
-            session = retrySession;
+            if (existing) {
+                session = existing;
+                break;
+            }
+
+            // Tentativa 2: Criar
+            const { data: created, error: createErr } = await supabase.from('sessions')
+                .insert([{ telegram_chat_id: chatId, bot_id: bot.id, status: 'active' }])
+                .select()
+                .single();
+
+            if (created) {
+                session = created;
+                break;
+            }
+
+            // Se der erro (ex: violação de unicidade se houver constraint), loop roda de novo e faz o Select acima
+            console.log(`[Webhook] Session Retry ${i + 1}: ${createErr?.message}`);
+            await new Promise(r => setTimeout(r, 500)); // Espera 500ms antes de tentar de novo
         }
 
-        // Safety fallback
+        // Safety fallback (Emergency Create if everything failed)
         if (!session) {
-            console.error("[Webhook] CRITICAL: Failed to get/create session.");
+            console.error("[Webhook] CRITICAL: Failed to get/create session after retries. Force Create Emergency Session.");
+            const { data: emergency } = await supabase.from('sessions').insert([{ telegram_chat_id: chatId, bot_id: bot.id, status: 'active', lead_score: 'EMERGENCY' }]).select().single();
+            session = emergency;
+        }
+
+        if (!session) {
+            // Se falhou até o emergency, aborta (não tem onde salvar)
+            console.error("[Webhook] FATAL: Could not resolve session.");
             return res.status(200).send('ok');
         }
 
@@ -349,18 +360,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // Aguarda para agrupar floods (8s para garantir que a segunda msg salve e seja vista)
             await new Promise(r => setTimeout(r, 8000));
 
-            // ATOMIC LOCK / LAST WRITER WINS (Telegram ID Version)
-            // Usamos telegram_message_id pois é garantido ser sequencial (UUID no banco não é).
-            const { count } = await supabase.from('messages')
-                .select('*', { count: 'exact', head: true })
+            // MASTER-FOLLOWER CHECK (MAX ID STRATEGY)
+            // Descobre quem é o "Mestre" (a mensagem mais recente de todas).
+            // A query busca explicitamente a mensagem com MAIOR ID nesta sessão.
+            const { data: maxMsg } = await supabase.from('messages')
+                .select('telegram_message_id')
                 .eq('session_id', session.id)
                 .eq('sender', 'user')
-                .gt('telegram_message_id', message.message_id);
+                .order('telegram_message_id', { ascending: false })
+                .limit(1)
+                .single();
 
-            console.log(`[Debounce] Atomic Check -> MyTelegramID: ${message.message_id} | Newer Messages Found: ${count}`);
+            console.log(`[Debounce] Master Check -> MyID: ${message.message_id} | MaxID: ${maxMsg?.telegram_message_id}`);
 
-            if (count && count > 0) {
-                console.log(`[Debounce] Abortando thread ${userMsgId} pois existem ${count} mensagens mais novas.`);
+            // Se eu não for o mestre (o mais recente), eu morro.
+            if (maxMsg && maxMsg.telegram_message_id !== message.message_id) {
+                console.log(`[Debounce] Abortando thread ${message.message_id} pois o Mestre é ${maxMsg.telegram_message_id}`);
                 return res.status(200).send('ok');
             }
 
