@@ -283,14 +283,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 2. Salvar Msg Usuário
         let userMsgId = null;
         if (!text.startsWith('[SYSTEM:')) {
-            const { data: insMsg } = await supabase.from('messages').insert([{
-                session_id: session.id,
-                sender: 'user',
-                content: text,
-                telegram_message_id: message.message_id
-            }]).select('id').single();
-            userMsgId = insMsg?.id;
+            try {
+                const { data: insMsg, error: insErr } = await supabase.from('messages').insert([{
+                    session_id: session.id,
+                    sender: 'user',
+                    content: text,
+                    telegram_message_id: message.message_id
+                }]).select('id').single();
+
+                if (insErr) {
+                    // Se der erro de constraint (duplicate key), é pq o Telegram reenviou a msg.
+                    // Nesse caso, ignoramos e retornamos 200 para ele parar de tentar.
+                    console.log(`[Webhook] Duplicate Message Triggered: ${message.message_id}`);
+                    return res.status(200).send('ok');
+                }
+                userMsgId = insMsg?.id;
+            } catch (err) {
+                console.error("[Webhook] Insert Error:", err);
+                return res.status(200).send('ok');
+            }
         }
+
 
         // 3. DEBOUNCE (Esperar 3s para agrupar mensagens)
         if (userMsgId && !text.startsWith('/start')) {
@@ -301,8 +314,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 body: JSON.stringify({ chat_id: chatId, action: 'typing' })
             });
 
-            // Aguarda para agrupar floods (12s para garantir)
-            await new Promise(r => setTimeout(r, 12000));
+            // Aguarda para agrupar floods (3s é suficiente e evita timeout do Vercel)
+            await new Promise(r => setTimeout(r, 3000));
 
             const { data: latestMsg } = await supabase.from('messages')
                 .select('id, telegram_message_id')
