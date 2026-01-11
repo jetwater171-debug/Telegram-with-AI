@@ -289,6 +289,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             session = ns;
         }
 
+        console.log(`[Webhook] Session ID: ${session.id} | Chat ID: ${chatId}`); // Log para verificar deduplicação
+
         // 2. Salvar Msg Usuário
         let userMsgId = null;
         if (!text.startsWith('[SYSTEM:')) {
@@ -326,17 +328,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // Aguarda para agrupar floods (8s para garantir que a segunda msg salve e seja vista)
             await new Promise(r => setTimeout(r, 8000));
 
-            // ATOMIC LOCK / LAST WRITER WINS
-            // Verifica se chegou alguma mensagem NOVA depois da que estamos processando agora.
-            // Se count > 0, significa que existe uma mensagem com ID maior que a minha (userMsgId).
-            // Logo, EU (instância atual) sou obsoleta e devo morrer. A nova mensagem vai assumir.
+            // ATOMIC LOCK / LAST WRITER WINS (Telegram ID Version)
+            // Usamos telegram_message_id pois é garantido ser sequencial (UUID no banco não é).
             const { count } = await supabase.from('messages')
                 .select('*', { count: 'exact', head: true })
                 .eq('session_id', session.id)
                 .eq('sender', 'user')
-                .gt('id', userMsgId);
+                .gt('telegram_message_id', message.message_id);
 
-            console.log(`[Debounce] Atomic Check -> MyID: ${userMsgId} | Newer Messages Found: ${count}`);
+            console.log(`[Debounce] Atomic Check -> MyTelegramID: ${message.message_id} | Newer Messages Found: ${count}`);
 
             if (count && count > 0) {
                 console.log(`[Debounce] Abortando thread ${userMsgId} pois existem ${count} mensagens mais novas.`);
