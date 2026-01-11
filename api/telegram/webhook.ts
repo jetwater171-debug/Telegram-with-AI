@@ -382,8 +382,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         }
 
-        // 3. Carregar Histórico (Ordenado por ID do Telegram para garantir sequência correta)
-        const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('telegram_message_id', { ascending: false }).limit(50);
+        // 3. Carregar Histórico (Ordenado por TIMESTAMP para garantir sequência correta e alinhar com o Master Check)
+        const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('created_at', { ascending: false }).limit(50);
 
         // --- AGRUPAMENTO DE MENSAGENS (FLOOD) ---
         // msgHistory[0] é a mais recente. Vamos pegar todas as msgs de 'user' consecutivas do início do array.
