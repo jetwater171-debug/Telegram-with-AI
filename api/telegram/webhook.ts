@@ -274,7 +274,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         if (!bot) return res.status(200).send('ok');
 
-        let { data: session } = await supabase.from('sessions').select('*').eq('telegram_chat_id', chatId).eq('bot_id', bot.id).single();
+        // FIX: Use limit(1).maybeSingle() to avoid erroring if duplicates exist. 
+        // We pick the oldest session to maintain stability.
+        let { data: session } = await supabase.from('sessions')
+            .select('*')
+            .eq('telegram_chat_id', chatId)
+            .eq('bot_id', bot.id)
+            .order('created_at', { ascending: true })
+            .limit(1)
+            .maybeSingle();
+
         if (!session) {
             const { data: ns } = await supabase.from('sessions').insert([{ telegram_chat_id: chatId, bot_id: bot.id, status: 'active' }]).select().single();
             session = ns;
@@ -314,8 +323,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 body: JSON.stringify({ chat_id: chatId, action: 'typing' })
             });
 
-            // Aguarda para agrupar floods (3s é suficiente e evita timeout do Vercel)
-            await new Promise(r => setTimeout(r, 3000));
+            // Aguarda para agrupar floods (8s para garantir que a segunda msg salve e seja vista)
+            await new Promise(r => setTimeout(r, 8000));
 
             const { data: latestMsg } = await supabase.from('messages')
                 .select('id, telegram_message_id')
@@ -325,7 +334,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 .limit(1)
                 .single();
 
-            console.log(`[Debounce] Current MsgID: ${userMsgId} | Latest MsgID: ${latestMsg?.id} | Latest TelID: ${latestMsg?.telegram_message_id}`);
+            console.log(`[Debounce] Check -> Current MsgID: ${userMsgId} | Latest DB ID: ${latestMsg?.id} | Latest DB TelegramID: ${latestMsg?.telegram_message_id}`);
 
             console.log(`[Debounce] MsgID: ${userMsgId} | Latest: ${latestMsg?.id}`);
 
