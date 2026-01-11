@@ -276,6 +276,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // FIX: Use limit(1).maybeSingle() to avoid erroring if duplicates exist. 
         // We pick the oldest session to maintain stability.
+        // FIX: Convergent Session Retrieval
+        // 1. Try to Fetch
         let { data: session } = await supabase.from('sessions')
             .select('*')
             .eq('telegram_chat_id', chatId)
@@ -284,9 +286,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .limit(1)
             .maybeSingle();
 
+        // 2. If not found, Try to Insert (Race Condition susceptible)
         if (!session) {
-            const { data: ns } = await supabase.from('sessions').insert([{ telegram_chat_id: chatId, bot_id: bot.id, status: 'active' }]).select().single();
-            session = ns;
+            await supabase.from('sessions').insert([{ telegram_chat_id: chatId, bot_id: bot.id, status: 'active' }]);
+
+            // 3. FORCE RE-FETCH (Convergence Step)
+            // Regardless of who won the race to insert, we BOTH fetch again.
+            // Since we order by created_at ASC and limit 1, we will BOTH settle on the exact same session ID.
+            const { data: retrySession } = await supabase.from('sessions')
+                .select('*')
+                .eq('telegram_chat_id', chatId)
+                .eq('bot_id', bot.id)
+                .order('created_at', { ascending: true })
+                .limit(1)
+                .maybeSingle();
+
+            session = retrySession;
+        }
+
+        // Safety fallback
+        if (!session) {
+            console.error("[Webhook] CRITICAL: Failed to get/create session.");
+            return res.status(200).send('ok');
         }
 
         console.log(`[Webhook] Session ID: ${session.id} | Chat ID: ${chatId}`); // Log para verificar deduplicação
