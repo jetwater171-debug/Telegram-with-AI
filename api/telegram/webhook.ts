@@ -266,7 +266,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const botId = req.query.bot_id as string;
         const text = message.text;
 
-        // 1. Identificar Bot e Sessão
+        // 1. Identificar Bot
         let { data: bot } = await supabase.from('telegram_bots').select('*').eq('id', botId).single();
         if (!bot) {
             const { data: fb } = await supabase.from('telegram_bots').select('*').eq('webhook_status', 'active').limit(1).single();
@@ -274,69 +274,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         if (!bot) return res.status(200).send('ok');
 
-        // FIX: Resilient Session Retrieval Loop (No Data Loss)
-        // Tenta buscar a sessão. Se não achar, cria. Se der erro ao criar (duplicada), busca de novo.
-        let session = null;
-        for (let i = 0; i < 3; i++) {
-            // Tentativa 1: Buscar
-            const { data: existing } = await supabase.from('sessions')
-                .select('*')
-                .eq('telegram_chat_id', chatId)
-                .eq('bot_id', bot.id)
-                .order('created_at', { ascending: true })
-                .limit(1)
-                .maybeSingle();
+        // ===============================================
+        // STRICT CONVERGENCE SESSION LOGIC (Fix Data Split)
+        // ===============================================
 
-            if (existing) {
-                session = existing;
-                break;
-            }
+        // 1. Attempt to Create (Blind Insert to handle first-time)
+        // We ignore errors here because if it fails, it means it already exists (good).
+        await supabase.from('sessions').insert([{ telegram_chat_id: chatId, bot_id: bot.id, status: 'active' }]).select().single();
 
-            // Tentativa 2: Criar
-            const { data: created, error: createErr } = await supabase.from('sessions')
-                .insert([{ telegram_chat_id: chatId, bot_id: bot.id, status: 'active' }])
-                .select()
-                .single();
+        // 2. Convergent Fetch
+        // We ALWAYS fetch user's oldest session. This handles the Race Condition where
+        // multiple threads might have tried to insert. The DB is the source of truth.
+        // We order by Created ASC to ensure everyone snaps to the same "Original" session.
+        let { data: session } = await supabase.from('sessions')
+            .select('*')
+            .eq('telegram_chat_id', chatId)
+            .eq('bot_id', bot.id)
+            .order('created_at', { ascending: true })
+            .limit(1)
+            .maybeSingle();
 
-            if (created) {
-                session = created;
-                break;
-            }
-
-            // Se der erro (ex: violação de unicidade se houver constraint), loop roda de novo e faz o Select acima
-            console.log(`[Webhook] Session Retry ${i + 1}: ${createErr?.message}`);
-            await new Promise(r => setTimeout(r, 500)); // Espera 500ms antes de tentar de novo
-        }
-
-        // Safety fallback (Emergency Create if everything failed)
+        // Safety fallback (Should never happen if DB is working)
         if (!session) {
-            console.error("[Webhook] CRITICAL: Failed to get/create session after retries. Force Create Emergency Session.");
-            const { data: emergency } = await supabase.from('sessions').insert([{ telegram_chat_id: chatId, bot_id: bot.id, status: 'active', lead_score: 'EMERGENCY' }]).select().single();
-            session = emergency;
-        }
-
-        if (!session) {
-            // Se falhou até o emergency, aborta (não tem onde salvar)
-            console.error("[Webhook] FATAL: Could not resolve session.");
+            console.error("[Webhook] CRITICAL: Failed to get session after blind insert.");
             return res.status(200).send('ok');
         }
 
-        console.log(`[Webhook] Session ID: ${session.id} | Chat ID: ${chatId}`); // Log para verificar deduplicação
+        console.log(`[Webhook] Converged on Session ID: ${session.id} | Chat ID: ${chatId}`);
 
         // 2. Salvar Msg Usuário
         let userMsgId = null;
         if (!text.startsWith('[SYSTEM:')) {
             try {
                 const { data: insMsg, error: insErr } = await supabase.from('messages').insert([{
-                    session_id: session.id,
+                    session_id: session.id, // Guarantee: All threads use SAME session.id
                     sender: 'user',
                     content: text,
                     telegram_message_id: message.message_id
                 }]).select('id').single();
 
                 if (insErr) {
-                    // Se der erro de constraint (duplicate key), é pq o Telegram reenviou a msg.
-                    // Nesse caso, ignoramos e retornamos 200 para ele parar de tentar.
                     console.log(`[Webhook] Duplicate Message Triggered: ${message.message_id}`);
                     return res.status(200).send('ok');
                 }
@@ -348,15 +325,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
 
-        // 3. DEBOUNCE (Esperar 3s para agrupar mensagens)
+        // 3. DEBOUNCE & GROUPING
         if (userMsgId && !text.startsWith('/start')) {
-            // Aguarda para agrupar floods (8s para garantir que a segunda msg salve e seja vista)
-            // REMOVED EARLY TYPING: User wants to wait before "activating".
-            await new Promise(r => setTimeout(r, 8000));
+
+            // Wait 4 seconds (Reduced to avoid timeouts, but enough for typing bursts)
+            // Silent wait (No typing indicator yet)
+            await new Promise(r => setTimeout(r, 4000));
 
             // MASTER-FOLLOWER CHECK (MAX TIMESTAMP STRATEGY)
-            // Problema com ID: Pode ser string/number e causar erro de comparação.
-            // Solução: Usar 'created_at'. A última mensagem inserida é a Mestre.
+            // Uses created_at to determine the definitive latest message.
             const { data: maxMsg } = await supabase.from('messages')
                 .select('id, created_at')
                 .eq('session_id', session.id)
@@ -367,14 +344,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             console.log(`[Debounce] Master Check -> MyID: ${userMsgId} | MaxID: ${maxMsg?.id}`);
 
-            // Se o ID da mensagem mais recente no banco não for o MEU ID (userMsgId), então eu não sou o mestre.
-            // (userMsgId é o ID do banco retornando no insert lá em cima)
             if (maxMsg && maxMsg.id !== userMsgId) {
                 console.log(`[Debounce] Abortando thread ${userMsgId} pois o Mestre é ${maxMsg.id}`);
                 return res.status(200).send('ok');
             }
 
-            // WE ARE THE MASTER. Now we show typing.
+            // WE ARE THE MASTER. Activate!
+            // Show Typing NOW.
             await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendChatAction`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -383,31 +359,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         }
 
-        // 3. Carregar Histórico (Ordenado por TIMESTAMP para garantir sequência correta e alinhar com o Master Check)
+        // 3. Carregar Histórico (Ordenado por TIMESTAMP)
+        // This ensures the AI sees the CONTEXT in the correct order, including the messages we just grouped.
         const { data: msgHistory } = await supabase.from('messages').select('*').eq('session_id', session.id).order('created_at', { ascending: false }).limit(50);
 
         // --- AGRUPAMENTO DE MENSAGENS (FLOOD) ---
-        // msgHistory[0] é a mais recente. Vamos pegar todas as msgs de 'user' consecutivas do início do array.
         const recentUserMsgs = [];
         for (const msg of (msgHistory || [])) {
             if (msg.sender === 'user') {
                 recentUserMsgs.push(msg.content);
             } else {
-                break; // Parar ao encontrar mensagem do bot/model
+                break; // Stop at first bot message
             }
         }
-        // Se por algum motivo nao achou nada (impossivel pois acabamos de salvar), usa o text atual
+
+        // Combine all recent user messages
         const combinedText = recentUserMsgs.length > 0
-            ? recentUserMsgs.reverse().join("\n") // Inverte para ficar ordem cronológica
+            ? recentUserMsgs.reverse().join("\n")
             : text;
 
         console.log(`[Grouping] Combined Message: ${combinedText}`);
 
-        // O historico para o Gemini deve EXCLUIR essas mensagens recentes que vamos enviar no prompt "message",
-        // senão ele acha que é duplicado ou fica confuso.
+        // Prepare History for Gemini (Exclude the ones we just grouped into 'message')
         const historyForGemini = (msgHistory || [])
-            .slice(recentUserMsgs.length) // Pula as N mensagens recentes do usuário
-            .reverse() // Poe em ordem cronológica
+            .slice(recentUserMsgs.length)
+            .reverse()
             .map(m => ({
                 role: (m.sender === 'bot' || m.sender === 'model') ? 'model' : 'user',
                 parts: [{ text: m.content.replace(/\[INTERNAL_THOUGHT\].*?\[\/INTERNAL_THOUGHT\]/gs, '').trim() }]
@@ -417,7 +393,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let stats = {};
         try { stats = typeof session.lead_score === 'string' ? JSON.parse(session.lead_score) : session.lead_score; } catch { }
 
-        const systemPrompt = getSystemInstruction(session.user_name, stats, "São Paulo"); // City placeholder
+        const systemPrompt = getSystemInstruction(session.user_name, stats, "São Paulo");
 
         const genAI = new GoogleGenAI({ apiKey: geminiKey });
         const chat = genAI.chats.create({
@@ -442,40 +418,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // 5. Processar Ações
-        // 5. Processar Ações
         let mediaUrl, mediaType;
 
-        // URLs Hardcoded fornecidas pelo usuario
-        const FIRST_PREVIEW_VIDEO_URL = "https://bhnsfqommnjziyhvzfli.supabase.co/storage/v1/object/public/media/previews/1764694671095_isiwgk.mp4";
-        const SHOWER_PHOTO_URL = "https://i.ibb.co/dwf177Kc/download.jpg";
-        const LINGERIE_PHOTO_URL = "https://i.ibb.co/dsx5mTXQ/3297651933149867831-62034582678-jpg.jpg";
-        const WET_FINGER_PHOTO_URL = "https://i.ibb.co/mrtfZbTb/fotos-de-bucetas-meladas-0.jpg";
-
-        // Helper para evitar duplicidade
         const hasSentMedia = (url: string) => msgHistory?.some((m: any) => m.media_url === url);
 
         if (aiResponse.action === 'send_shower_photo') {
-            if (!hasSentMedia(SHOWER_PHOTO_URL)) {
-                mediaUrl = SHOWER_PHOTO_URL;
-                mediaType = 'image';
-            }
+            if (!hasSentMedia(SHOWER_PHOTO_URL)) { mediaUrl = SHOWER_PHOTO_URL; mediaType = 'image'; }
         }
         else if (aiResponse.action === 'send_lingerie_photo') {
-            if (!hasSentMedia(LINGERIE_PHOTO_URL)) {
-                mediaUrl = LINGERIE_PHOTO_URL;
-                mediaType = 'image';
-            }
+            if (!hasSentMedia(LINGERIE_PHOTO_URL)) { mediaUrl = LINGERIE_PHOTO_URL; mediaType = 'image'; }
         }
         else if (aiResponse.action === 'send_wet_finger_photo') {
-            if (!hasSentMedia(WET_FINGER_PHOTO_URL)) {
-                mediaUrl = WET_FINGER_PHOTO_URL;
-                mediaType = 'image';
-            }
+            if (!hasSentMedia(WET_FINGER_PHOTO_URL)) { mediaUrl = WET_FINGER_PHOTO_URL; mediaType = 'image'; }
         }
         else if (aiResponse.action === 'send_video_preview') {
-            // REMOVIDO CHECK DE DUPLICIDADE PARA O VIDEO (Fundamental para o fluxo)
-            mediaUrl = FIRST_PREVIEW_VIDEO_URL;
-            mediaType = 'video';
+            mediaUrl = FIRST_PREVIEW_VIDEO_URL; mediaType = 'video';
         }
         else if (aiResponse.action === 'check_payment_status') {
             const { data: lastPay } = await supabase.from('messages').select('payment_data').eq('session_id', session.id).not('payment_data', 'is', null).order('created_at', { ascending: false }).limit(1).single();
@@ -483,14 +440,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const stRes = await fetch(`${WIINPAY_BASE_URL}/payment/list/${lastPay.payment_data.paymentId}`, { headers: { 'Authorization': `Bearer ${WIINPAY_API_KEY}` } });
                 const stData = await stRes.json();
                 const isPaid = stData?.status === 'approved' || stData?.status === 'paid' || stData?.data?.status === 'approved';
-                const feedback = isPaid ? "[SYSTEM: PAGAMENTO APROVADO! Envie o vídeo completo.]" : "[SYSTEM: Pagamento ainda pendente.]";
 
-                // Re-inject feedback to AI (simple approach: send as message or recurse)
-                // Vamos apenas mandar o feedback como mensagem do usuario oculta para triggerar a IA de novo ou responder direto? 
-                // Simplificação: Responde direto se pago.
                 if (isPaid) {
                     aiResponse.messages = ["Amor, confirmou aqui!!! 😍", "Tô te mandando o vídeo completinho agora... prepara..."];
-                    // Atualizar com a URL real do video completo quando disponivel
                     mediaUrl = "https://bhnsfqommnjziyhvzfli.supabase.co/storage/v1/object/public/media/previews/1764694671095_isiwgk.mp4";
                     mediaType = 'video';
                 } else {
@@ -517,7 +469,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (aiResponse.action === 'request_app_install') {
             aiResponse.messages.push("⬇️ *Instale o App da Lari para ver mais*");
-            // Se tiver um link real, coloque aqui. Por enquanto é simulado ou botão do Telegram se fosse webapp.
         }
 
         // 6. Enviar e Salvar
@@ -541,42 +492,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             current_state: aiResponse.current_state
         }).eq('id', session.id);
 
-        // Envios Telegram
-        // Envios Telegram com Typing Realista
+        // Envios Telegram (Typing Simulado)
         if (aiResponse.messages) {
             for (const msg of aiResponse.messages) {
-                // 1. Enviar Status 'Digitando...'
                 await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendChatAction`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ chat_id: chatId, action: 'typing' })
                 });
 
-                // 2. Calcular Delay Realista (60ms por caractere, min 1.5s, max 5s)
                 const typingDelay = Math.min(5000, Math.max(1500, msg.length * 60));
                 await new Promise(r => setTimeout(r, typingDelay));
 
-                // 3. Enviar Mensagem
                 await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendMessage`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ chat_id: chatId, text: msg })
                 });
 
-                // 4. Pausa entre balões
                 await new Promise(r => setTimeout(r, 800));
             }
         }
         if (mediaUrl) {
             const mtd = mediaType === 'video' ? 'sendVideo' : 'sendPhoto';
-            // 1. Action de Upload
             await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendChatAction`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ chat_id: chatId, action: mediaType === 'video' ? 'upload_video' : 'upload_photo' })
             });
 
-            // 2. Envio da Mídia
             const mediaRes = await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/${mtd}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -584,17 +528,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     chat_id: chatId,
                     [mediaType === 'video' ? 'video' : 'photo']: mediaUrl,
                     caption: "🔥",
-                    supports_streaming: true // Ajuda em videos longos
+                    supports_streaming: true
                 })
             });
 
-            // 3. Fallback se falhar
             if (!mediaRes.ok) {
-                console.error(`Falha ao enviar mídia (${mediaType}): ${mediaRes.status} ${mediaRes.statusText}`);
-                const errBody = await mediaRes.text();
-                console.error("Telegram Error:", errBody);
-
-                // Manda o link direto
                 await fetch(`${TELEGRAM_API_BASE}${bot.bot_token}/sendMessage`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
