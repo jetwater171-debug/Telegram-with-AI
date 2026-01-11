@@ -326,23 +326,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // Aguarda para agrupar floods (8s para garantir que a segunda msg salve e seja vista)
             await new Promise(r => setTimeout(r, 8000));
 
-            const { data: latestMsg } = await supabase.from('messages')
-                .select('id, telegram_message_id')
+            // ATOMIC LOCK / LAST WRITER WINS
+            // Verifica se chegou alguma mensagem NOVA depois da que estamos processando agora.
+            // Se count > 0, significa que existe uma mensagem com ID maior que a minha (userMsgId).
+            // Logo, EU (instância atual) sou obsoleta e devo morrer. A nova mensagem vai assumir.
+            const { count } = await supabase.from('messages')
+                .select('*', { count: 'exact', head: true })
                 .eq('session_id', session.id)
                 .eq('sender', 'user')
-                .order('telegram_message_id', { ascending: false })
-                .limit(1)
-                .single();
+                .gt('id', userMsgId);
 
-            console.log(`[Debounce] Check -> Current MsgID: ${userMsgId} | Latest DB ID: ${latestMsg?.id} | Latest DB TelegramID: ${latestMsg?.telegram_message_id}`);
+            console.log(`[Debounce] Atomic Check -> MyID: ${userMsgId} | Newer Messages Found: ${count}`);
 
-            console.log(`[Debounce] MsgID: ${userMsgId} | Latest: ${latestMsg?.id}`);
-
-            // Se existir uma mensagem MAIS RECENTE (ID maior), abortamos.
-            if (latestMsg && latestMsg.id !== userMsgId) {
-                console.log(`[Debounce] Abortando thread ${userMsgId} em favor de ${latestMsg.id}`);
+            if (count && count > 0) {
+                console.log(`[Debounce] Abortando thread ${userMsgId} pois existem ${count} mensagens mais novas.`);
                 return res.status(200).send('ok');
             }
+
         }
 
         // 3. Carregar Histórico (Ordenado por ID do Telegram para garantir sequência correta)
